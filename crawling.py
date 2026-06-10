@@ -23,7 +23,6 @@ async def generate_naver_titles_llm(data):
     else:
         departure_context = "- 지정 출발공항: 없음 (★주의: 상품명 맨 앞에 '[기본출발]', '[기본출발지]', '[출발지없음]' 등 어떠한 출발 관련 문구도 절대 넣지 말고, 곧바로 '지역명'부터 시작할 것)"
 
-    # 🌟 [교정] 불필요하고 혼선을 주던 pure_title을 완전히 제외하고, full_title의 단서를 극대화하도록 프롬프트 전면 수정
     prompt = f"""
 당신은 네이버 쇼핑 검색 최적화(SEO) 및 소비자 심리를 꿰뚫는 초일류 퍼포먼스 마케팅 카피라이팅 전문가입니다.
 제공된 여행 상품 데이터를 바탕으로, 가이드라인을 완벽히 준수하는 4가지 서로 다른 마케팅 콘셉트의 상품명을 각각 3개씩(총 12개) 생성하세요.
@@ -77,7 +76,6 @@ async def generate_naver_titles_llm(data):
         }
     }
 
-    # 🌟 [보완] 결과의 유니크함을 보장하기 위한 무한 중복 방지 재시도 블록
     max_retries = 3
     current_temp = 0.4
     
@@ -121,7 +119,8 @@ async def generate_naver_titles_llm(data):
     return tuple(titles_list)
 
 
-async def process_single_product(item, target_region, target_airport, current_url, existing_titles_dict, runtime_titles_dict):
+# 🌟 수정구역 1: idx(순번) 매개변수 추가
+async def process_single_product(item, target_region, target_airport, current_url, existing_titles_dict, runtime_titles_dict, idx):
     """
     개별 엘리먼트 추출 가이드라인을 유지하면서, 신규/기존 캐시 조건 및 비어있는 데이터 복구를 정교하게 제어합니다.
     """
@@ -141,8 +140,8 @@ async def process_single_product(item, target_region, target_airport, current_ur
         price_raw = await price_el.inner_text() if price_el else "0"
         price = "".join(filter(str.isdigit, price_raw))
 
-        # ID 고유화
-        unique_str = f"{full_title}_{price}"
+        # 🌟 수정구역 2: 제목 + 가격 + URL + 순번을 결합하여 완벽한 고유 ID 부여 (ID 충돌 원천 차단)
+        unique_str = f"{full_title}_{price}_{current_url}_{idx}"
         product_id = hashlib.md5(unique_str.encode()).hexdigest()[:8]
 
         # 3. 정제 상품명 및 해시태그 수집 원형 복구
@@ -196,7 +195,6 @@ async def process_single_product(item, target_region, target_airport, current_ur
         # 1단계: 기존 구글 시트에 데이터가 완벽하게 존재하는지 체크
         if product_id in existing_titles_dict:
             sheet_titles = existing_titles_dict[product_id]
-            # ID가 있더라도 12개 텍스트 중 단 하나라도 비어있으면 캐시를 무효화하고 재생성 대상으로 분류
             if sheet_titles and all(str(t).strip() for t in sheet_titles):
                 titles = sheet_titles
                 is_cached = True
@@ -204,16 +202,17 @@ async def process_single_product(item, target_region, target_airport, current_ur
                 print(f"♻️ [공백 복구] ID({product_id})는 존재하나 상품명 데이터가 누락되어 LLM 재작업을 할당합니다: {full_title}")
 
         # 2단계: 동일 회차(Runtime) 내 런타임 캐시 확인
-        if not is_cached and full_title in runtime_titles_dict:
-            titles = runtime_titles_dict[full_title]
+        # 🌟 수정구역 3: 캐시 키값을 full_title에서 product_id로 변경 (등급/가격이 다르면 캐시 오작동 안 함)
+        if not is_cached and product_id in runtime_titles_dict:
+            titles = runtime_titles_dict[product_id]
             is_cached = True
-            print(f"♻️ [비용 절감] 동일 회차 내 원본형 상품명 캐시 재사용: {full_title}")
+            print(f"♻️ [비용 절감] 동일 회차 내 고유 상품 캐시 재사용: {full_title} ({price}원)")
 
         # 3단계: 기존 상품이 아니거나 데이터 공백 발견 시 ➡️ 최초/재생성 LLM 호출
         if not is_cached or titles is None:
-            print(f"✨ [신규/미완성 상품 발견] LLM 12대 타이틀 통합 생성 시작: {full_title}")
+            print(f"✨ [신규/미완성 상품 발견] LLM 12대 타이틀 통합 생성 시작: {full_title} ({price}원)")
             ai_input_data = {
-                "full_title": full_title,  # pure_title은 제거하고 원본명만 명확히 전달
+                "full_title": full_title,
                 "region": target_region,          
                 "departure_airport": target_airport, 
                 "duration": duration,
@@ -221,7 +220,9 @@ async def process_single_product(item, target_region, target_airport, current_ur
                 "hashtags": ", ".join(all_hashtags)
             }
             titles = await generate_naver_titles_llm(ai_input_data)
-            runtime_titles_dict[full_title] = titles  # 런타임 캐시 즉시 갱신
+            
+            # 🌟 수정구역 4: 런타임 캐시 저장 시에도 product_id를 키값으로 매핑
+            runtime_titles_dict[product_id] = titles  
         # ----------------------------------------------------------------------
 
         return {
@@ -308,7 +309,6 @@ async def run_crawler():
         
         for r in existing_data:
             if r.get("ID"):
-                # 🌟 기존 캐시 보관 시 튜플 형태로 깔끔하게 저장하여 판정부에서 공백 검사 가능케 유도
                 existing_titles_dict[str(r["ID"])] = (
                     r.get("A_정석_1", ""), r.get("A_정석_2", ""), r.get("A_정석_3", ""),
                     r.get("B_타겟_1", ""), r.get("B_타겟_2", ""), r.get("B_타겟_3", ""),
@@ -378,9 +378,10 @@ async def run_crawler():
                 final_items = await page.query_selector_all(".prod_list_wrap ul.type > li")
                 print(f"📦 최종 수집된 타겟 엘리먼트 총 {len(final_items)}개! 조건부 병렬 처리를 시작합니다.")
                 
+                # 🌟 수정구역 5: enumerate를 결합하여 개별 엘리먼트에 루프 순번(idx) 주입
                 tasks = [
-                    process_single_product(item, target_region, target_airport, current_url, existing_titles_dict, runtime_titles_dict) 
-                    for item in final_items
+                    process_single_product(item, target_region, target_airport, current_url, existing_titles_dict, runtime_titles_dict, idx) 
+                    for idx, item in enumerate(final_items)
                 ]
                 
                 batch_results = await asyncio.gather(*tasks)
@@ -400,10 +401,8 @@ async def run_crawler():
         if scraped_products:
             print("\n🚀 마스터 데이터 비교 및 시트 적재 동기화 시작...")
             try:
-                # 1. 크롤링해온 실시간 웹 데이터를 DataFrame화
                 df_scraped = pd.DataFrame(scraped_products)
                 
-                # 2. 고유 컬럼 순서 설정
                 column_order = [
                     "ID", "원본상품명", "정제상품명", "가격", "URL", "이미지URL", "지정지역", "출발공항",
                     "A_정석_1", "A_정석_2", "A_정석_3",
@@ -413,14 +412,17 @@ async def run_crawler():
                 ]
                 df_scraped = df_scraped[column_order]
 
-                # 3. 데이터 업데이트 가이드라인 적용
-                # 웹 크롤링 기반 전수조사 데이터이기 때문에, df_scraped 그 자체가 최종 생존 리스트가 됩니다.
-                # (웹에서 내려갔거나 삭제된 상품은 df_scraped에 수집되지 않으므로 자연스럽게 리스트에서 동기화 탈락(=삭제) 처리됩니다.)
+                # 🌟 수정구역 6: 소스 시트에 등록된 기획전 URL이 겹치거나 웹상에 중복 노출된 동일 상품 행을 'URL' 기준으로 정밀 제거
+                before_count = len(df_scraped)
+                df_scraped = df_scraped.drop_duplicates(subset=["URL"], keep="first")
+                after_count = len(df_scraped)
+                if before_count != after_count:
+                    print(f"🧹 [청소 완료] 웹상에서 중복 노출되던 상품 {before_count - after_count}개를 최종 제거했습니다.")
                 
                 data_to_upload = [df_scraped.columns.values.tolist()] + df_scraped.values.tolist()
 
                 sheet = target_doc.worksheet(worksheet_name)
-                sheet.clear()  # 기존 시트를 비우고 최종 정리된 리스트만 깔끔하게 동기화 적재
+                sheet.clear()  
                 sheet.update(values=data_to_upload, range_name='A1')
                 print(f"🎯 [최종 성공] 마스터 Raw 시트 [{target_doc.title}] 동기화 완료! (총 {len(df_scraped)}개 생존 유지 및 추가)")
 
