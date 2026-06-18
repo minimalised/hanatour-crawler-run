@@ -22,7 +22,7 @@ gc = gspread.authorize(creds)
 
 # 환경 변수 및 날짜 계산
 SPREADSHEET_ID = os.environ["TARGET_SPREADSHEET_ID"]
-TARGET_SHEET_NAME = "raw2"
+TARGET_SHEET_NAME = "판매상품리스트"
 CURRENT_MONTH = f"{datetime.now().month}월"  # 월이 바뀌면 '7월', '8월' 자동 계산
 
 print(f"⏰ {CURRENT_MONTH} 데이터 동기화를 시작합니다.")
