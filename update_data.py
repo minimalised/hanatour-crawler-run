@@ -75,13 +75,13 @@ worksheet = sh.worksheet(TARGET_SHEET_NAME)
 print("🧹 기존 시트 데이터를 비우는 중...")
 worksheet.clear()  # 기존 데이터 삭제
 
-# 대용량 처리를 위해 데이터를 롤(행) 단위로 쪼개어 대량 업로드 (행 용량 초과 방지)
+# 대용량 처리를 위해 데이터를 행 단위로 쪼개어 대량 업로드 (행 용량 초과 방지)
 CHUNK_SIZE = 10000  # 1만 행씩 나누어 안전하게 전송
 print(f"🚀 {len(values):,}행 데이터를 {CHUNK_SIZE:,}행씩 분할 업로드 시작...")
 
 # 첫 번째 청크에는 헤더를 포함하여 업로드
 first_chunk = [header] + values[:CHUNK_SIZE-1]
-worksheet.update_values('A1', first_chunk)
+worksheet.update(first_chunk, 'A1')  # update_values 대신 update 사용
 
 # 그 다음 청크부터 차례대로 아래에 이어 붙이기
 start_row = CHUNK_SIZE
@@ -89,7 +89,7 @@ for i in range(CHUNK_SIZE - 1, len(values), CHUNK_SIZE):
     chunk = values[i:i+CHUNK_SIZE]
     # 데이터가 밀려 들어갈 정확한 시작 셀 주소 계산 (예: A10000)
     range_start = f"A{start_row}"
-    worksheet.update_values(range_start, chunk)
+    worksheet.update(chunk, range_start)  # update_values 대신 update 사용
     start_row += len(chunk)
     print(f"  .. {start_row:,}행 완료")
 
