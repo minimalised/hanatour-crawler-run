@@ -60,14 +60,37 @@ while not done:
 fh.seek(0)
 
 # 4. Pandas로 50만 행 고속 로드 (결측치 처리 등)
+print("📊 엑셀 데이터를 로드하는 중...")
 df = pd.read_excel(fh)
 df = df.fillna("")  # 빈 칸 처리
-data_to_upload = [df.columns.values.tolist()] + df.values.tolist()
+
+# 헤더와 데이터 분리
+header = df.columns.values.tolist()
+values = df.values.tolist()
 
 # 5. 내 구글 스프레드시트의 특정 시트 비우고 새로 밀어넣기
 sh = gc.open_by_key(SPREADSHEET_ID)
 worksheet = sh.worksheet(TARGET_SHEET_NAME)
-worksheet.clear()  # 기존 50만 행 삭제
-worksheet.update('A1', data_to_upload)  # 새 50만 행 업로드
+
+print("🧹 기존 시트 데이터를 비우는 중...")
+worksheet.clear()  # 기존 데이터 삭제
+
+# 대용량 처리를 위해 데이터를 롤(행) 단위로 쪼개어 대량 업로드 (행 용량 초과 방지)
+CHUNK_SIZE = 10000  # 1만 행씩 나누어 안전하게 전송
+print(f"🚀 {len(values):,}행 데이터를 {CHUNK_SIZE:,}행씩 분할 업로드 시작...")
+
+# 첫 번째 청크에는 헤더를 포함하여 업로드
+first_chunk = [header] + values[:CHUNK_SIZE-1]
+worksheet.update_values('A1', first_chunk)
+
+# 그 다음 청크부터 차례대로 아래에 이어 붙이기
+start_row = CHUNK_SIZE
+for i in range(CHUNK_SIZE - 1, len(values), CHUNK_SIZE):
+    chunk = values[i:i+CHUNK_SIZE]
+    # 데이터가 밀려 들어갈 정확한 시작 셀 주소 계산 (예: A10000)
+    range_start = f"A{start_row}"
+    worksheet.update_values(range_start, chunk)
+    start_row += len(chunk)
+    print(f"  .. {start_row:,}행 완료")
 
 print("✅ 구글 스프레드시트 업데이트 완료!")
