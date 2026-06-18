@@ -9,19 +9,18 @@ on:
 
 jobs:
   run-automation:
-    runs-on: ubuntu-latest  # 최신 리눅스 환경에서 가볍고 빠르게 실행
+    runs-on: ubuntu-latest
 
     steps:
     # 1. GitHub 저장소에 올린 파이썬 코드를 가상 서버로 가져옵니다.
     - name: Check out repository code
       uses: actions/checkout@v4
 
-    # 2. 가상 서버에 파이썬 환경을 안정적인 버전으로 세팅합니다.
+    # 2. 가상 서버에 파이썬 환경을 세팅합니다. (문제가 된 cache 한 줄을 제거했습니다)
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
-        cache: 'pip' # 패키지 다운로드 속도 향상을 위한 캐시 활성화
 
     # 3. 50만 행 대용량 데이터 로드 및 구글 API 연동에 필수적인 라이브러리들을 설치합니다.
     - name: Install dependencies
