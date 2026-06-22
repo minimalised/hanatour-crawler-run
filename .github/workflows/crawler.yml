@@ -2,7 +2,6 @@ name: Daily Hanatour Crawling
 
 on:
   schedule:
-    - cron: '0 21 * * *'  # 매일 한국 시간 오전 6시 자동 실행
   workflow_dispatch:      # 수동 실행 버튼 활성화
 
 jobs:
