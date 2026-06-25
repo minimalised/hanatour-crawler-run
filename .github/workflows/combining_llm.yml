@@ -33,7 +33,7 @@ jobs:
     - name: Run LLM Processing Script
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        TARGET_SPREADSHEET_ID: ${{ secrets.SOURCE_SPREADSHEET_ID }} 
+        SOURCE_SPREADSHEET_ID: ${{ secrets.SOURCE_SPREADSHEET_ID }} 
         GOOGLE_JSON_RAW: ${{ secrets.GOOGLE_JSON_RAW }}
       run: |
         python combining.py
