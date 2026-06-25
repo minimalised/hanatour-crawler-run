@@ -12,8 +12,8 @@ from openai import AsyncOpenAI
 # 1. GitHub Secrets 기반 설정 및 초기화
 # ==========================================
 # ⭕ [교정 완료] 캡처본에 있던 실제 변수명 SOURCE_SPREADSHEET_ID로 정확히 바꿨습니다!
-SPREADSHEET_KEY = os.environ.get("SOURCE_SPREADSHEET_ID") 
-SOURCE_SHEET_NAME = "raw"                      # 원본 데이터 시트명
+SPREADSHEET_KEY = os.environ.get("TARGET_SPREADSHEET_ID") 
+SOURCE_SHEET_NAME = "raw"            # 원본 데이터 시트명
 CACHE_FILE_PATH = "product_cache.json"          # GitHub 레포지토리에 저장할 캐시 파일 경로
 
 # Rate Limit 방지를 위한 동시 요청 제한 (세마포어)
