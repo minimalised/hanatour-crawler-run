@@ -1,18 +1,19 @@
 name: Daily Product LLM Recomposition
 
 on:
-  # 1. 기존 조건: 크롤링 액션이 성공적으로 완료되었을 때 자동 실행
+  # 🔥 중요: 기존 액션의 name인 "Daily Hanatour Data Sync"와 완벽히 일치시켰습니다.
   workflow_run:
-    workflows: ["Daily Product Crawler"]
+    workflows: ["Daily Hanatour Data Sync"]
     types:
       - completed
 
-  # 2. 추가 조건: 내가 켜고 싶을 때 깃허브 웹사이트에서 버튼 눌러서 켜기 (수동)
+  # 내가 원할 때 깃허브 웹에서 [Run workflow] 버튼으로 수동 실행
   workflow_dispatch:
+
 
 jobs:
   run-llm-pipeline:
-    # 크롤링 완료 이벤트를 타고 온 경우 '성공'했을 때만 실행하고, 수동 실행(workflow_dispatch)이나 스케줄러(schedule)일 때는 바로 실행되도록 예외 처리
+    # 자동 체이닝 시 '성공'했을 때만 실행되도록 하고, 수동 실행이나 스케줄러일 때는 바로 실행
     if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
@@ -36,6 +37,7 @@ jobs:
         SOURCE_SHEET_ID: ${{ secrets.SOURCE_SHEET_ID }}
         GOOGLE_JSON_RAW: ${{ secrets.GOOGLE_JSON_RAW }}
       run: |
+        # 저장하신 파일명인 combining.py로 실행합니다.
         python combining.py
 
     - name: Commit and Push Cache Changes
