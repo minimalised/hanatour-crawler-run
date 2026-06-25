@@ -1,0 +1,44 @@
+name: Daily Product LLM Recomposition
+
+on:
+  workflow_run:
+    workflows: ["Daily Product Crawler"]
+    types:
+      - completed
+
+jobs:
+  run-llm-pipeline:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }} # 크롤링이 성공했을 때만 실행
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+
+    - name: Install Dependencies
+      run: |
+        pip install gspread google-auth openai
+
+    - name: Run LLM Processing Script
+      env:
+        # 캡처본에 있던 실제 Repository Secrets 이름들과 완벽하게 매칭했습니다.
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        SOURCE_SHEET_ID: ${{ secrets.SOURCE_SHEET_ID }}
+        GOOGLE_JSON_RAW: ${{ secrets.GOOGLE_JSON_RAW }}
+      run: |
+        # 실행할 파일명을 combining.py로 정확하게 수정했습니다.
+        python combining.py
+
+    - name: Commit and Push Cache Changes # 업데이트된 캐시파일을 레포지토리에 자동 Push
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action Bot"
+        git add product_cache.json
+        # 변경사항이 있을 때만 커밋 (에러 방지)
+        git diff --quiet && git diff --staged --quiet || (git commit -m "🤖 갱신: 상품 캐시 데이터 업데이트 (Incremental)" && git push)
