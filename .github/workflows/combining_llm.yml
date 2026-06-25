@@ -1,14 +1,19 @@
 name: Daily Product LLM Recomposition
 
 on:
+  # 1. 기존 조건: 크롤링 액션이 성공적으로 완료되었을 때 자동 실행
   workflow_run:
     workflows: ["Daily Product Crawler"]
     types:
       - completed
 
+  # 2. 추가 조건: 내가 켜고 싶을 때 깃허브 웹사이트에서 버튼 눌러서 켜기 (수동)
+  workflow_dispatch:
+
 jobs:
   run-llm-pipeline:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }} # 크롤링이 성공했을 때만 실행
+    # 크롤링 완료 이벤트를 타고 온 경우 '성공'했을 때만 실행하고, 수동 실행(workflow_dispatch)이나 스케줄러(schedule)일 때는 바로 실행되도록 예외 처리
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -27,18 +32,15 @@ jobs:
 
     - name: Run LLM Processing Script
       env:
-        # 캡처본에 있던 실제 Repository Secrets 이름들과 완벽하게 매칭했습니다.
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         SOURCE_SHEET_ID: ${{ secrets.SOURCE_SHEET_ID }}
         GOOGLE_JSON_RAW: ${{ secrets.GOOGLE_JSON_RAW }}
       run: |
-        # 실행할 파일명을 combining.py로 정확하게 수정했습니다.
         python combining.py
 
-    - name: Commit and Push Cache Changes # 업데이트된 캐시파일을 레포지토리에 자동 Push
+    - name: Commit and Push Cache Changes
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action Bot"
         git add product_cache.json
-        # 변경사항이 있을 때만 커밋 (에러 방지)
         git diff --quiet && git diff --staged --quiet || (git commit -m "🤖 갱신: 상품 캐시 데이터 업데이트 (Incremental)" && git push)
