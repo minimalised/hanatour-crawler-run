@@ -33,10 +33,9 @@ jobs:
     - name: Run LLM Processing Script
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        SOURCE_SHEET_ID: ${{ secrets.SOURCE_SPREADSHEET_ID }}
+        TARGET_SPREADSHEET_ID: ${{ secrets.TARGET_SPREADSHEET_ID }} 
         GOOGLE_JSON_RAW: ${{ secrets.GOOGLE_JSON_RAW }}
       run: |
-        # 저장하신 파일명인 combining.py로 실행합니다.
         python combining.py
 
     - name: Commit and Push Cache Changes
