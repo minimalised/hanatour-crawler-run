@@ -12,7 +12,7 @@ from openai import AsyncOpenAI
 # 1. GitHub Secrets 기반 설정 및 초기화
 # ==========================================
 # ⭕ 기존 크롤러와 동일한 TARGET_SPREADSHEET_ID 변수명을 바라보도록 수정했습니다.
-SPREADSHEET_KEY = os.environ.get("TARGET_SPREADSHEET_ID") 
+SPREADSHEET_KEY = os.environ.get("SOURCE_SPREADSHEET_ID") 
 SOURCE_SHEET_NAME = "raw"                      # 원본 데이터 시트명
 CACHE_FILE_PATH = "product_cache.json"          # GitHub 레포지토리에 저장할 캐시 파일 경로
 
