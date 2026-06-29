@@ -183,7 +183,11 @@ async def main():
         is_changed = not is_new and cleaned_cache[p_id]["hash"] != current_hash
         is_missing_result = not p["current_result"]
         
-        if is_new or is_changed or is_missing_result:
+        # 💡 [추가] 행이 당겨져서 현재 시트 G열의 값과 캐시 속 원래 결과물이 일치하지 않는지 체크
+        is_row_shifted = not is_new and p["current_result"] != cleaned_cache[p_id]["recomposed_name"]
+        
+        # 💡 [수정] 행이 뒤틀린 경우(is_row_shifted)도 처리 대상에 포함시킵니다.
+        if is_new or is_changed or is_missing_result or is_row_shifted:
             targets_to_process.append(p)
             
     print(f"📊 분석 결과: 전체 {len(current_products):,}개 중")
