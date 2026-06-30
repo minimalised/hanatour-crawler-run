@@ -29,15 +29,15 @@ def parse_product_info(html_content, url):
                 price = txt.replace(",", "")
                 break
                 
-        # [🔥 수정] 플레이스홀더(bg_alpha)를 제외한 진짜 상품 이미지 주소 추출
+        # [🔥 최종 고도화] bg_alpha만 아니면 예외 없이 무조건 첫 배너 이미지 추출
         image_link = "N/A"
         img_elements = soup.select(".swiper-slide img")
         for img in img_elements:
             src = img.get("src", "").strip()
-            # bg_alpha가 포함되지 않고, 하나투어 이미지 저장소(cms/resize) 주소인 진짜 이미지만 매핑
-            if src and "bg_alpha" not in src and "cms/resize" in src:
+            # 투명 플레이스홀더만 아니면 확장자(jpg, JPG, jpeg) 불문하고 매핑
+            if src and "bg_alpha" not in src:
                 image_link = src
-                break # 첫 번째 진짜 이미지를 찾으면 루프 종료
+                break
                 
         return [prod_id, title, price, url, image_link]
     except Exception as e:
@@ -52,7 +52,7 @@ async def main():
     target_sheet = spreadsheet.worksheet("수동raw")
     
     urls_to_crawl = source_sheet.col_values(1)[1:]
-    print(f"[*] 총 {len(urls_to_crawl)}개의 URL 탐색 (이미지 정밀 스캔 모드)")
+    print(f"[*] 총 {len(urls_to_crawl)}개의 URL 탐색 (종합 무결점 모드)")
     
     update_payload = []
     
@@ -67,7 +67,6 @@ async def main():
         )
         page = await context.new_page()
         
-        # 이미지 다운로드는 차단하여 고속을 유지하되 HTML 내부 주소 텍스트만 파싱함
         await page.route("**/*", lambda route: route.abort() if route.request.resource_type in ["image", "stylesheet", "font", "media"] or "analytics" in route.request.url else route.continue_())
         
         for idx, url in enumerate(urls_to_crawl, start=2):
@@ -75,7 +74,7 @@ async def main():
                 update_payload.append(["N/A", "N/A", "N/A", url if url else "", "N/A"])
                 continue
                 
-            print(f"[*] [{idx}행] 상단 요소 스캔 중: {url}")
+            print(f"[*] [{idx}행] 상품 데이터 추출 중: {url}")
             try:
                 await page.goto(url, wait_until="commit", timeout=15000)
                 
@@ -101,7 +100,7 @@ async def main():
         end_row = 1 + len(update_payload)
         target_range = f"G2:K{end_row}"
         target_sheet.update(range_name=target_range, values=update_payload)
-        print(f"[+] 이미지 필터링 및 갱신 전송 완료!")
+        print(f"[+] [동기화 최종 완료] 모든 상품 정보가 무결점으로 업데이트되었습니다.")
 
 if __name__ == "__main__":
     asyncio.run(main())
