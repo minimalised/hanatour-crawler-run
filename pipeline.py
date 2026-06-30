@@ -64,23 +64,23 @@ def main():
     final_output = [df_cleaned.columns.tolist()] + df_cleaned.values.tolist()
     total_rows = len(final_output)
 
-    # 4. '상품명_중복제거2' 시트에 즉시 적재 공간 확보
-    print("💾 3. '상품명_중복제거2' 시트에 일괄 적재 시작...")
+    # 4. '상품명_중복제거' 시트에 즉시 적재 공간 확보
+    print("💾 3. '상품명_중복제거' 시트에 일괄 적재 시작...")
     
     # 💡 셀 개수 제한(1,000만 개)을 넘지 않도록 딱 필요한 만큼만(실제 데이터 행 수) 지정합니다.
     required_rows = total_rows
     
     try:
-        target_sheet = doc.worksheet("상품명_중복제거2")
+        target_sheet = doc.worksheet("상품명_중복제거")
         target_sheet.clear()
         
         # ⚠️ 정확한 행 수와 열 수로 리사이즈하여 불필요한 빈 셀을 최소화합니다.
         target_sheet.resize(rows=required_rows, cols=len(header))
-        print(f"🧹 기존 '상품명_중복제거2' 시트를 비우고 크기를 딱 맞게 {required_rows:,}행으로 조정했습니다.")
+        print(f"🧹 기존 '상품명_중복제거' 시트를 비우고 크기를 딱 맞게 {required_rows:,}행으로 조정했습니다.")
     except gspread.exceptions.WorksheetNotFound:
         # 새로 생성할 때도 딱 필요한 만큼만 크기를 지정합니다.
-        target_sheet = doc.add_worksheet(title="상품명_중복제거2", rows=required_rows, cols=len(header))
-        print(f"🆕 '상품명_중복제거2' 시트를 {required_rows:,}행 크기로 새로 생성했습니다.")
+        target_sheet = doc.add_worksheet(title="상품명_중복제거", rows=required_rows, cols=len(header))
+        print(f"🆕 '상품명_중복제거' 시트를 {required_rows:,}행 크기로 새로 생성했습니다.")
         
     # 5. 대용량 안전 업로드 (1만 행씩 분할 적재)
     chunk_size = 10000
@@ -97,7 +97,7 @@ def main():
         target_sheet.update(range_name=range_string, values=chunk)
         print(f"  └ [진행] {start_row:,} ~ {end_row:,} 행 적재 완료")
 
-    print(f"\n✨ 모든 프로세스가 성공적으로 종료되었습니다. '상품명_중복제거2' 시트에 최종 반영되었습니다.")
+    print(f"\n✨ 모든 프로세스가 성공적으로 종료되었습니다. '상품명_중복제거' 시트에 최종 반영되었습니다.")
 
 if __name__ == "__main__":
     main()
