@@ -26,7 +26,8 @@ def parse_product_info(html_content, url):
         for elem in price_elements:
             txt = elem.get_text(strip=True)
             if "원" not in txt and txt:
-                price = txt
+                # [수정] 천단위 쉼표(,)를 완전히 제거하여 숫자 형식으로 변경
+                price = txt.replace(",", "")
                 break
                 
         img_element = soup.select_one(".swiper-slide.swiper-slide-active img")
@@ -45,7 +46,7 @@ async def main():
     target_sheet = spreadsheet.worksheet("수동raw")
     
     urls_to_crawl = source_sheet.col_values(1)[1:]
-    print(f"[*] 총 {len(urls_to_crawl)}개의 URL 탐색 (상단 타깃팅 초고속 모드)")
+    print(f"[*] 총 {len(urls_to_crawl)}개의 URL 탐색 (상단 타깃팅 + 쉼표 제거 모드)")
     
     update_payload = []
     
@@ -60,7 +61,6 @@ async def main():
         )
         page = await context.new_page()
         
-        # 속도 극대화를 위해 미디어/스타일 리소스 다운로드 차단 유지
         await page.route("**/*", lambda route: route.abort() if route.request.resource_type in ["image", "stylesheet", "font", "media"] or "analytics" in route.request.url else route.continue_())
         
         for idx, url in enumerate(urls_to_crawl, start=2):
@@ -68,36 +68,35 @@ async def main():
                 update_payload.append(["N/A", "N/A", "N/A", url if url else "", "N/A"])
                 continue
                 
-            print(f"[*] [{idx}행] 상단 요소 스캔 중: {url}")
+            print(f"[*] [{idx}행] 상품 정보 스캔 중: {url}")
             try:
-                # [핵심] 전체 페이지 로딩 대기를 'commit'으로 걸어 뼈대 주소만 매핑되면 바로 진입
                 await page.goto(url, wait_until="commit", timeout=15000)
                 
-                # [핵심] 하단 컨텐츠 무시하고, 상단 상품코드(.prod_code strong)가 나타날 때까지만 최대 6초 대기
                 try:
                     await page.wait_for_selector(".prod_code strong", timeout=6000)
                 except:
-                    pass # 타임아웃 나더라도 일단 파싱 시도
+                    pass
                 
                 html_content = await page.content()
                 product_data = parse_product_info(html_content, url)
                 update_payload.append(product_data)
                 
-                # 단기간 오버헤드 방지를 위한 미세 휴식
                 await asyncio.sleep(0.5)
                 
             except Exception as e:
-                print(f"[-] {idx}행 크리티컬 실패 패스: {e}")
+                print(f"[-] {idx}행 실패 패스: {e}")
                 update_payload.append(["Fail", "Fail", "Fail", url, "Fail"])
         
         await browser.close()
         
     if update_payload:
+        print("[*] 기존 '수동raw' 시트의 영역을 정리하고 새로 동기화합니다.")
         target_sheet.batch_clear(["G2:K1000"])
+        
         end_row = 1 + len(update_payload)
         target_range = f"G2:K{end_row}"
         target_sheet.update(range_name=target_range, values=update_payload)
-        print(f"[+] 초고속 상단 타깃팅 크롤링 완료.")
+        print(f"[+] 쉼표 제거 완료 및 '수동raw' 시트 1:1 적재 성공!")
 
 if __name__ == "__main__":
     asyncio.run(main())
