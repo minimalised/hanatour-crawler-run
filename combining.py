@@ -26,9 +26,16 @@ def clean_origin_name(text: str) -> str:
     
     text = re.sub(r'https?://\S+', '', text)
     text = re.sub(r'_[A-Za-z0-9]+', '', text)
-    text = re.sub(r'\b(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{8,}\b', '', text)
-    text = re.sub(r'\b[A-Z]{3,}\d{3,}[A-Z]*\b', '', text) 
+    text = re.sub(r'\b[A-Z]{3,}\d{3,}[A-Za-z0-9]*\b', '', text)
+    text = re.sub(r'\b[A-Za-z0-9]{10,20}\b', '', text)
     text = text.replace("_", " ")
+    
+    trash_words = ["선착순특가", "실속여행", "신상품", "대박특가", "출발확정", "세미팩", "[SK스토아 에디션]", "[USJ 오피셜 호텔]", "[USJ와패키지를한번에]", "[VIP]"]
+    for word in trash_words:
+        text = text.replace(word, "")
+        
+    text = re.sub(r'\b\d{7,}\b', '', text)
+    text = re.sub(r'[^가-힣0-9\s\-\[\]\(\)\&]', '', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
@@ -105,15 +112,24 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
                         {
                             "role": "system", 
                             "content": (
-                                "너는 글로벌 커머스 마케팅 피드 최적화 전문 카피라이터야. "
-                                "입력된 원본 상품명을 문맥적으로 분석하여 다음 [⚠️ 핵심 제약 가이드라인]을 만족하는 매력적인 상품명으로 재구성해줘.\n\n"
-                                "⚠️ [핵심 제약 가이드라인]\n"
-                                "1. 최종 상품명은 최소 15자 ~ 최대 45자 사이로 구성할 것. 짧아도 좋으니 이상한 코드를 강제로 붙여서 글자 수를 늘리지 마라.\n"
-                                "2. 최종 상품명 내부에는 쉼표(,), 느낌표(!), 물결(~), 플러스(+), 언더바(_) 같은 부호나 특수문자를 절대 포함할 수 없음.\n"
-                                "3. 결과물에 영문 알파벳(A-Z, a-z)이나 언더바(_)가 포함된 마스터 코드는 단 한 글자도 진입할 수 없음.\n"
-                                "4. '9일 여행', '10일 패키지', '5일 일정', '4성급 호텔' 등 여행 상품의 중요한 정보가 되는 숫자와 결합된 일정 단어는 절대로 지우지 말고 무조건 포함시켜라.\n"
-                                "5. '선착순특가', '실속여행', '신상품', '대박특가', '출발확정', '세미팩' 등 유치하고 진부한 광고성 홍보 단어는 무조건 삭제할 것.\n"
-                                "6. 설명이나 서론, 후론 없이 오직 재구성된 상품명 '딱 한 줄'만 반환할 것.\n\n"
+                                "너는 네이버 쇼핑 검색 노출 로직(SEO) 최적화 및 커머스 마케팅 피드 전문 카피라이터야. "
+                                "너의 유일한 목적은 원본 상품명에서 불필요한 노이즈를 제거하고, 네이버 쇼핑 노출 스코어가 가장 높은 25자 이상 45자 이하의 매매력적인 완성형 상품명으로 재조합하는 것이다.\n\n"
+                                "⚠️ [네이버 쇼핑 SEO 핵심 가이드라인]\n"
+                                "1. 🎯 엄격한 글자 수 제한 (25자 ~ 45자):\n"
+                                "   - 최종 추천 결과물의 길이는 공백을 포함하여 반드시 최소 25자에서 최대 45자 사이여야 한다. (★45자 절대 초과 금지, 25자 미만 절대 금지★)\n"
+                                "2. 🧠 정보 중심의 유기적 재조합 (키워드 단순 나열 금지):\n"
+                                "   - '미샌딩포함 스낵 제공'처럼 키워드 조각을 무작정 이어 붙인 나열형 상품명은 네이버 로직에서 어뷰징으로 차단당한다.\n"
+                                "   - 반드시 문맥을 파악하여 '메리어트호텔 6일 클락 명문 골프 패키지', '홋카이도 후라노 비에이 온천호텔 4일 패키지여행'처럼 소비자가 읽기 쉽고 로직이 선호하는 부드러운 문장 구조로 재조합해라.\n"
+                                "3. 🛑 상품 ID, 코드 및 영문 노이즈 전면 제거:\n"
+                                "   - 상품 고유 ID, 영어 알파벳과 숫자가 뒤섞인 마스터 코드 등 시스템 노이즈는 네이버 쇼핑 검색 품질 가이드라인 위반이므로 단 한 글자도 진입시키지 마라. 100% 순수 한글, 일정 숫자, 공백으로만 채워라.\n"
+                                "4. 💎 핵심 가치 정보(숫자) 보존:\n"
+                                "   - '9일', '10일', '4일', '4성급', '18홀 3회' 등 여행 상품의 일자, 기간, 등급을 나타내는 숫자는 네이버 검색 필수 키워드이므로 절대로 누락하지 말고 카피 속에 자연스럽게 녹여내라.\n"
+                                "5. 광고성 공해 단어 전면 배제:\n"
+                                "   - '선착순특가', '실속여행', '신상품', '대박특가', '출발확정', '세미팩' 등 네이버 로직이 스팸으로 분류하는 진부한 홍보 단어는 무조건 삭제해라.\n\n"
+                                "⚠️ [출력 제한 사양]\n"
+                                "- 문장 끝은 끊기지 않고 신뢰감을 주는 명사구 형태(예: ~ 여행, ~ 패키지, ~ 투어)로 자연스럽게 끝맺음할 것.\n"
+                                "- 쉼표(,), 느낌표(!), 물결(~), 플러스(+), 언더바(_) 등의 부호는 절대 사용 금지.\n"
+                                "- 부가적인 설명, 서론, 후론은 일체 배제하고 오직 가공 완료된 상품명 '딱 한 줄'만 출력할 것.\n\n"
                                 f"{extra_prompt}"
                             )
                         },
@@ -128,12 +144,12 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
                 suggested_name = re.sub(r'[A-Za-z_]', '', suggested_name).strip()
                 suggested_name = re.sub(r'\s+', ' ', suggested_name)
                 
-                if suggested_name not in confirmed_pool and len(suggested_name) >= 10:
+                if suggested_name not in confirmed_pool and 25 <= len(suggested_name) <= 45:
                     confirmed_pool.add(suggested_name)
                     return suggested_name
                 
                 retry_count += 1
-                extra_prompt = f"\n⚠️ 이전에 나온 결과와 중복되거나 너무 짧습니다. 다르게 재구성하세요."
+                extra_prompt = f"\n⚠️ 글자 수가 25자~45자 범위를 벗어났거나 단순 단어 나열 형태입니다. 네이버 쇼핑 노출 규격(25~45자)에 맞게 완성형 문장으로 다시 작성하세요."
                 
             except Exception as e:
                 print(f"❌ API 에러 발생 ({origin_name}): {e}")
@@ -141,8 +157,10 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
                 retry_count += 1
                 
         fallback_name = re.sub(r'[A-Za-z_]', '', origin_name).strip()
-        if not fallback_name:
-            fallback_name = "추천 해외 여행 상품"
+        if len(fallback_name) > 45:
+            fallback_name = fallback_name[:42] + " 여행"
+        elif len(fallback_name) < 25:
+            fallback_name = fallback_name + " 추천 패키지 여행"
         confirmed_pool.add(fallback_name)
         return fallback_name
 
@@ -158,12 +176,6 @@ async def main():
     current_product_ids = {p["id"] for p in current_products}
     cleaned_cache = {str(p_id): data for p_id, data in old_cache.items() if str(p_id) in current_product_ids}
     
-    confirmed_pool = set()
-    for p in current_products:
-        p_id = p["id"]
-        if p_id in cleaned_cache and p["current_result"] == cleaned_cache[p_id]["recomposed_name"]:
-            confirmed_pool.add(p["current_result"])
-
     targets_to_process = []
     new_cache = cleaned_cache.copy()
     
@@ -171,19 +183,36 @@ async def main():
         p_id = p["id"]
         current_hash = calculate_hash(p["name"])
         
-        is_new = p_id not in cleaned_cache
-        is_changed = not is_new and cleaned_cache[p_id]["hash"] != current_hash
-        is_missing_result = not p["current_result"]
-        is_row_shifted = not is_new and p["current_result"] != cleaned_cache[p_id]["recomposed_name"]
+        has_corrupted_result = (
+            not p["current_result"] or
+            "_" in p["current_result"] or 
+            re.search(r'[A-Za-z]', p["current_result"]) or 
+            p["current_result"].endswith(("포함", "제공", "특전")) or 
+            not (25 <= len(p["current_result"]) <= 45) or
+            " " not in p["current_result"][-8:]
+        )
         
-        has_corrupted_result = "_" in p["current_result"] or re.search(r'[A-Za-z]', p["current_result"])
-        
-        if is_new or is_changed or is_missing_result or is_row_shifted or has_corrupted_result:
+        if has_corrupted_result:
+            if p_id in new_cache:
+                del new_cache[p_id]
             targets_to_process.append(p)
+        else:
+            is_new = p_id not in cleaned_cache
+            is_changed = not is_new and cleaned_cache[p_id]["hash"] != current_hash
+            is_row_shifted = not is_new and p["current_result"] != cleaned_cache[p_id]["recomposed_name"]
+            
+            if is_new or is_changed or is_row_shifted:
+                targets_to_process.append(p)
+
+    confirmed_pool = set()
+    for p in current_products:
+        p_id = p["id"]
+        if p_id in new_cache and p_id not in {t["id"] for t in targets_to_process}:
+            confirmed_pool.add(new_cache[p_id]["recomposed_name"])
             
     print(f"📊 분석 결과: 현재 raw 시트 수식 데이터 {len(current_products):,}개 중")
     print(f"   - 기존 유지 상품: {len(current_products) - len(targets_to_process):,}개")
-    print(f"   - 신규/변경/오류 수정 처리 대상: {len(targets_to_process):,}개")
+    print(f"   - 네이버 로직 기준 미달 및 신규 강제 수정 처리 대상: {len(targets_to_process):,}개")
     
     if not targets_to_process:
         print("✅ 새로 처리할 상품이 없습니다. 작업을 종료합니다.")
