@@ -1,4 +1,4 @@
-name: Hanatour Auto Product Crawler
+name: Hanatour Manual Product Crawler
 
 on:
   schedule:
