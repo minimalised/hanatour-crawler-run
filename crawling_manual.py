@@ -26,13 +26,19 @@ def parse_product_info(html_content, url):
         for elem in price_elements:
             txt = elem.get_text(strip=True)
             if "원" not in txt and txt:
-                # [수정] 천단위 쉼표(,)를 완전히 제거하여 숫자 형식으로 변경
                 price = txt.replace(",", "")
                 break
                 
-        img_element = soup.select_one(".swiper-slide.swiper-slide-active img")
-        image_link = img_element["src"] if img_element and img_element.has_attr("src") else "N/A"
-        
+        # [🔥 수정] 플레이스홀더(bg_alpha)를 제외한 진짜 상품 이미지 주소 추출
+        image_link = "N/A"
+        img_elements = soup.select(".swiper-slide img")
+        for img in img_elements:
+            src = img.get("src", "").strip()
+            # bg_alpha가 포함되지 않고, 하나투어 이미지 저장소(cms/resize) 주소인 진짜 이미지만 매핑
+            if src and "bg_alpha" not in src and "cms/resize" in src:
+                image_link = src
+                break # 첫 번째 진짜 이미지를 찾으면 루프 종료
+                
         return [prod_id, title, price, url, image_link]
     except Exception as e:
         return ["Error", "Error", "Error", url, "Error"]
@@ -46,7 +52,7 @@ async def main():
     target_sheet = spreadsheet.worksheet("수동raw")
     
     urls_to_crawl = source_sheet.col_values(1)[1:]
-    print(f"[*] 총 {len(urls_to_crawl)}개의 URL 탐색 (상단 타깃팅 + 쉼표 제거 모드)")
+    print(f"[*] 총 {len(urls_to_crawl)}개의 URL 탐색 (이미지 정밀 스캔 모드)")
     
     update_payload = []
     
@@ -61,6 +67,7 @@ async def main():
         )
         page = await context.new_page()
         
+        # 이미지 다운로드는 차단하여 고속을 유지하되 HTML 내부 주소 텍스트만 파싱함
         await page.route("**/*", lambda route: route.abort() if route.request.resource_type in ["image", "stylesheet", "font", "media"] or "analytics" in route.request.url else route.continue_())
         
         for idx, url in enumerate(urls_to_crawl, start=2):
@@ -68,7 +75,7 @@ async def main():
                 update_payload.append(["N/A", "N/A", "N/A", url if url else "", "N/A"])
                 continue
                 
-            print(f"[*] [{idx}행] 상품 정보 스캔 중: {url}")
+            print(f"[*] [{idx}행] 상단 요소 스캔 중: {url}")
             try:
                 await page.goto(url, wait_until="commit", timeout=15000)
                 
@@ -90,13 +97,11 @@ async def main():
         await browser.close()
         
     if update_payload:
-        print("[*] 기존 '수동raw' 시트의 영역을 정리하고 새로 동기화합니다.")
         target_sheet.batch_clear(["G2:K1000"])
-        
         end_row = 1 + len(update_payload)
         target_range = f"G2:K{end_row}"
         target_sheet.update(range_name=target_range, values=update_payload)
-        print(f"[+] 쉼표 제거 완료 및 '수동raw' 시트 1:1 적재 성공!")
+        print(f"[+] 이미지 필터링 및 갱신 전송 완료!")
 
 if __name__ == "__main__":
     asyncio.run(main())
