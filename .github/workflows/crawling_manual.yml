@@ -21,7 +21,8 @@ jobs:
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install gspread google-auth playwright beautifulsoup4
+        # 여기에 pandas를 추가합니다.
+        pip install gspread google-auth playwright beautifulsoup4 pandas
         
     - name: Install Playwright Browsers
       run: npx playwright install chromium --with-deps
