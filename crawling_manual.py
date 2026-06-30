@@ -2,6 +2,7 @@ import os
 import json
 import asyncio
 import gspread
+import pandas as pd
 from google.oauth2.service_account import Credentials
 from playwright.async_api import async_playwright
 from bs4 import BeautifulSoup
@@ -53,13 +54,15 @@ async def main():
     gc = get_gspread_client()
     spreadsheet = gc.open_by_key(spreadsheet_id)
     
-    # 읽는 시트와 쓰는 시트 분리 설정
     source_sheet = spreadsheet.worksheet("수동상품리스트")
     target_sheet = spreadsheet.worksheet("수동raw")
     
-    # 수동상품리스트 시트의 A열 모든 URL을 가져옵니다. (A2부터)
-    urls_to_crawl = source_sheet.col_values(1)[1:]
-    print(f"[*] 총 {len(urls_to_crawl)}개의 URL을 탐색합니다.")
+    # A열의 모든 URL을 가져와 데이터프레임으로 1차 중복 제거 (대용량 코드의 장점 반영)
+    raw_urls = source_sheet.col_values(1)[1:]
+    df_urls = pd.DataFrame(raw_urls, columns=["url"]).drop_duplicates(subset=["url"], keep="first")
+    urls_to_crawl = df_urls["url"].tolist()
+    
+    print(f"[*] 중복 제거 후 총 {len(urls_to_crawl)}개의 고유 URL을 탐색합니다.")
     
     update_payload = []
     
@@ -70,28 +73,41 @@ async def main():
         )
         page = await context.new_page()
         
-        for idx, url in enumerate(urls_to_crawl, start=2): # 로그 출력용 행 번호
-            print(f"[*] [{idx}행] 크롤링 중: {url}")
+        # [대용량 코드의 가속화 로직 적용] 이미지, 폰트, 스타일시트 및 광고/분석 스크립트 전면 차단
+        await page.route(
+            "**/*", 
+            lambda route: route.abort() 
+            if route.request.resource_type in ["image", "stylesheet", "font", "media"] 
+               or "analytics" in route.request.url 
+               or "google" in route.request.url 
+            else route.continue_()
+        )
+        
+        for idx, url in enumerate(urls_to_crawl, start=2):
+            if not url or not url.startswith("http"):
+                continue
+                
+            print(f"[*] [{idx}행] 고속 크롤링 중: {url}")
             try:
-                await page.goto(url, wait_until="networkidle", timeout=30000)
-                await page.wait_for_timeout(2000) # 동적 컨텐츠 렌더링 대기
+                # wait_until을 domcontentloaded로 설정하여 기본 HTML만 뜨면 대기 종료 (15초 타임아웃)
+                await page.goto(url, wait_until="domcontentloaded", timeout=15000)
                 
                 html_content = await page.content()
                 product_data = parse_product_info(html_content, url)
                 update_payload.append(product_data)
                 
             except Exception as e:
-                print(f"[-] {idx}행 접근 실패: {e}")
+                print(f"[-] {idx}행 접근 실패 또는 타임아웃: {e}")
                 update_payload.append(["Fail", "Fail", "Fail", url, "Fail"])
         
         await browser.close()
         
-    # 4. '수동raw' 시트의 G2부터 K열 영역에 한 번에 업데이트
-    end_row = 1 + len(update_payload)
-    # G열(id), H열(title), I열(price), J열(link), K열(image_link)
-    target_range = f"G2:K{end_row}"
-    target_sheet.update(range_name=target_range, values=update_payload)
-    print(f"[+] '수동raw' 시트 적재 완료! (범위: {target_range})")
+    # 4. '수동raw' 시트의 G2부터 K열 영역에 한 번에 업데이트 (원샷 통적재)
+    if update_payload:
+        end_row = 1 + len(update_payload)
+        target_range = f"G2:K{end_row}"
+        target_sheet.update(range_name=target_range, values=update_payload)
+        print(f"[+] '수동raw' 시트 적재 완료! (범위: {target_range})")
 
 if __name__ == "__main__":
     asyncio.run(main())
