@@ -1,7 +1,6 @@
 import os
 import json
 import asyncio
-import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 from playwright.async_api import async_playwright
@@ -40,11 +39,12 @@ def parse_product_info(html_content, url):
         img_element = soup.select_one(".swiper-slide.swiper-slide-active img")
         image_link = img_element["src"] if img_element and img_element.has_attr("src") else "N/A"
         
-        return [prod_id, title, price, image_link]
+        # 요청된 순서: id, title, price, link, image_link
+        return [prod_id, title, price, url, image_link]
         
     except Exception as e:
         print(f"[-] 파싱 오류 ({url}): {e}")
-        return ["Error", "Error", "Error", "Error"]
+        return ["Error", "Error", "Error", url, "Error"]
 
 # 3. 메인 실행 프로세스
 async def main():
@@ -52,14 +52,16 @@ async def main():
         
     gc = get_gspread_client()
     spreadsheet = gc.open_by_key(spreadsheet_id)
-    sheet = spreadsheet.worksheet("수동상품리스트")
     
-    # A열의 모든 URL을 가져옵니다. (A1은 헤더 'url'이므로 2번째 행부터 가져옴)
-    urls_to_crawl = sheet.col_values(1)[1:]
+    # 읽는 시트와 쓰는 시트 분리 설정
+    source_sheet = spreadsheet.worksheet("수동상품리스트")
+    target_sheet = spreadsheet.worksheet("수동raw")
+    
+    # 수동상품리스트 시트의 A열 모든 URL을 가져옵니다. (A2부터)
+    urls_to_crawl = source_sheet.col_values(1)[1:]
     print(f"[*] 총 {len(urls_to_crawl)}개의 URL을 탐색합니다.")
     
     update_payload = []
-    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -68,7 +70,7 @@ async def main():
         )
         page = await context.new_page()
         
-        for idx, url in enumerate(urls_to_crawl, start=2): # 행 번호는 2부터 시작 (A2)
+        for idx, url in enumerate(urls_to_crawl, start=2): # 로그 출력용 행 번호
             print(f"[*] [{idx}행] 크롤링 중: {url}")
             try:
                 await page.goto(url, wait_until="networkidle", timeout=30000)
@@ -76,22 +78,20 @@ async def main():
                 
                 html_content = await page.content()
                 product_data = parse_product_info(html_content, url)
-                
-                # 수집 시간(last_updated) 추가하여 페이로드 구성
-                product_data.append(current_time)
                 update_payload.append(product_data)
                 
             except Exception as e:
                 print(f"[-] {idx}행 접근 실패: {e}")
-                update_payload.append(["Fail", "Fail", "Fail", "Fail", current_time])
+                update_payload.append(["Fail", "Fail", "Fail", url, "Fail"])
         
         await browser.close()
         
-    # 4. 구글 스프레드시트에 한 번에 업데이트 (B2 셀부터 범위 지정)
+    # 4. '수동raw' 시트의 G2부터 K열 영역에 한 번에 업데이트
     end_row = 1 + len(update_payload)
-    target_range = f"B2:F{end_row}"
-    sheet.update(range_name=target_range, values=update_payload)
-    print(f"[+] 스프레드시트 업데이트 완료! (범위: {target_range})")
+    # G열(id), H열(title), I열(price), J열(link), K열(image_link)
+    target_range = f"G2:K{end_row}"
+    target_sheet.update(range_name=target_range, values=update_payload)
+    print(f"[+] '수동raw' 시트 적재 완료! (범위: {target_range})")
 
 if __name__ == "__main__":
     asyncio.run(main())
