@@ -1,16 +1,13 @@
 import os
 import json
 import pandas as pd
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
+from google.oauth2.service_account import Credentials
+import gspread
 
-def get_sheets_service(env_json):
-    """구글 시트 API 서비스 객체 생성"""
-    creds = service_account.Credentials.from_service_account_info(
-        env_json, 
-        scopes=['https://www.googleapis.com/auth/spreadsheets']
-    )
-    return build('sheets', 'v4', credentials=creds)
+# ==========================================
+# 1. GitHub Secrets 기반 설정
+# ==========================================
+SPREADSHEET_ID = os.environ.get("SOURCE_SPREADSHEET_ID")
 
 def extract_date_from_code(code):
     """기존 앱스 스크립트의 고속 정렬 기준 (판매상품코드에서 날짜 부분 추출)"""
@@ -19,94 +16,81 @@ def extract_date_from_code(code):
         return code_str[6:12]
     return "999999"
 
-def process_product_pipeline():
-    # 1. 환경 변수에서 GitHub Secrets 값 로드
-    raw_json = os.environ.get("GOOGLE_JSON_RAW")
-    source_id = os.environ.get("SOURCE_SPREADSHEET_ID")
-    target_id = os.environ.get("TARGET_SPREADSHEET_ID")
+def main():
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    google_json_raw = os.environ.get("GOOGLE_JSON_RAW")
     
-    if not raw_json or not source_id or not target_id:
-        raise ValueError("GitHub Secrets 설정이 누락되었습니다. 이미지의 변수명들을 다시 확인해주세요.")
+    if not google_json_raw or not SPREADSHEET_ID:
+        raise ValueError("GitHub Secrets 설정(GOOGLE_JSON_RAW 또는 SOURCE_SPREADSHEET_ID)을 확인해주세요.")
         
-    service_account_info = json.loads(raw_json)
-    sheets_service = get_sheets_service(service_account_info)
+    service_account_info = json.loads(google_json_raw)
+    creds = Credentials.from_service_account_info(service_account_info, scopes=scopes)
+    gc = gspread.authorize(creds)
     
-    # 2. 원본 구글 시트에서 데이터 가져오기 (판매상품리스트 시트의 A:Z 전체)
-    print("1. '판매상품리스트' 시트에서 55만 행 데이터 로드 중...")
-    range_name = "'판매상품리스트'!A:Z" 
-    result = sheets_service.spreadsheets().values().get(
-        spreadsheetId=source_id, 
-        range=range_name
-    ).execute()
+    # 1. 원본 '판매상품리스트' 시트 데이터 로드
+    print("🛒 1. '판매상품리스트' 시트에서 55만 행 대용량 데이터 로드 중...")
+    doc = gc.open_by_key(SPREADSHEET_ID)
+    source_sheet = doc.worksheet("판매상품리스트")
+    all_values = source_sheet.get_all_values()
     
-    rows = result.get('values', [])
-    if not rows:
-        print("처리할 데이터가 원본 시트에 없습니다.")
+    if not all_values:
+        print("ℹ️ '판매상품리스트' 시트에 데이터가 없습니다.")
         return
         
-    # 3. Pandas 데이터프레임으로 변환
-    header = rows[0]
-    data = rows[1:]
-    df = pd.DataFrame(data, columns=header)
-    print(f"데이터 로드 완료: 총 {len(df)}행")
+    header = all_values[0]
+    data = all_values[1:]
     
-    # 예외 방지: 판매상품코드와 판매상품명 컬럼이 없으면 에러 방지용 검사
+    # 2. Pandas 데이터프레임 변환
+    df = pd.DataFrame(data, columns=header)
+    print(f"📦 로드 완료: 총 {len(df):,}행")
+    
+    # 3. 고속 정렬 및 중복 제거
+    print("⚡ 2. 파이썬 Pandas 고속 정렬 및 '판매상품명' 기준 중복 제거 시작...")
+    
     if '판매상품코드' not in df.columns or '판매상품명' not in df.columns:
-        raise KeyError("시트에 '판매상품코드' 또는 '판매상품명' 컬럼명이 정확히 존재하는지 확인해주세요.")
-
-    # 4. [최적화 1] 고속 문자열 정렬 (기존 앱스 스크립트 localeCompare 로직)
-    print("2. 고속 정렬 알고리즘 작동 중...")
+        raise KeyError("시트에 '판매상품코드' 또는 '판매상품명' 컬럼이 정확히 존재하는지 확인해주세요.")
+        
+    # 날짜 기준 정렬
     df['sort_key'] = df['판매상품코드'].apply(extract_date_from_code)
     df = df.sort_values(by='sort_key', ascending=True).drop(columns=['sort_key'])
     
-    # 5. [최적화 2] 판매상품명 기준 중복 제거 (기존 앱스 스크립트 Set 필터링 로직)
-    print("3. 판매상품명 기준 중복 제거 정제 시작...")
+    # 빈 값 제외 및 '판매상품명' 기준 중복 제거 (첫 번째 값 유지)
     df = df.dropna(subset=['판매상품명'])
-    df = df[df['판매상품명'].str.strip() != ""] # 빈 공백 문자열 제거
-    df_cleaned = df.drop_duplicates(subset=['판매상품명'], keep='first')
-    print(f"정제 완료: {len(df_cleaned)}행 남음.")
+    df = df[df['판매상품명'].str.strip() != ""]
+    df_cleaned = df.drop_duplicates(subset=['판매상품명'], keep='first').copy()
+    print(f"🎯 정제 완료: {len(df_cleaned):,}행 남음.")
     
-    # -------------------------------------------------------------------------
-    # 🔥 6. 여기에 기존 3-1, 3-2 상품명 재조합 로직을 연결하세요!
-    print("4. 상품명 재조합 단계 진입 (기존 3-1, 3-2 단계)...")
-    
-    recombined_rows = []
-    for index, row in df_cleaned.iterrows():
-        original_name = row['판매상품명']
+    # 4. '상품명_중복제거2' 시트에 즉시 적재
+    print("💾 3. '상품명_중복제거2' 시트에 일괄 적재 시작...")
+    try:
+        target_sheet = doc.worksheet("상품명_중복제거2")
+        target_sheet.clear()
+        print("🧹 기존 '상품명_중복제거2' 시트를 비웠습니다.")
+    except gspread.exceptions.WorksheetNotFound:
+        target_sheet = doc.add_worksheet(title="상품명_중복제거2", rows=1000, cols=len(header))
+        print("🆕 '상품명_중복제거2' 시트를 새로 생성했습니다.")
         
-        # 💡 [질문자님의 기존 재조합 로직이 들어갈 자리]
-        # 만약 OpenAI API를 쓰신다면 os.environ.get("OPENAI_API_KEY")로 키를 가져와서 쓰시면 됩니다.
-        final_name = original_name # 임시값
+    # 헤더와 정제된 데이터를 합쳐서 리스트로 변환
+    final_output = [df_cleaned.columns.tolist()] + df_cleaned.values.tolist()
+    
+    # 5. 대용량 안전 업로드 (1만 행씩 분할 적재)
+    total_rows = len(final_output)
+    chunk_size = 10000
+    
+    print(f"🚀 총 {total_rows:,}행(헤더 포함)을 {chunk_size:,}행씩 나누어 안전하게 업로드합니다.")
+    
+    for i in range(0, total_rows, chunk_size):
+        chunk = final_output[i:i + chunk_size]
+        start_row = i + 1
+        end_row = i + len(chunk)
         
-        new_row = row.to_dict()
-        new_row['판매상품명'] = final_name
-        recombined_rows.append(new_row)
+        # A{start_row} 형태로 범위 지정 (예: A1, A10001...)
+        range_string = f"A{start_row}"
         
-    df_final_result = pd.DataFrame(recombined_rows)
-    # -------------------------------------------------------------------------
-    
-    # 7. 타겟 구글 시트("상품명_중복제거")에 결과 밀어넣기
-    print("5. 타겟 스프레드시트에 결과 데이터 쓰는 중...")
-    
-    # 덮어쓰기를 위해 데이터프레임을 다시 리스트 형태로 변환 (헤더 포함)
-    output_values = [df_final_result.columns.tolist()] + df_final_result.values.tolist()
-    
-    # 기존 데이터 깨끗하게 비우기 (Clear)
-    sheets_service.spreadsheets().values().clear(
-        spreadsheetId=target_id,
-        range="A:Z"
-    ).execute()
-    
-    # 정제된 데이터 쓰기 (Update)
-    body = {'values': output_values}
-    sheets_service.spreadsheets().values().update(
-        spreadsheetId=target_id,
-        range="A1",
-        valueInputOption="RAW",
-        body=body
-    ).execute()
-    
-    print("✨ 모든 프로세스가 완벽하게 종료되었습니다. 타겟 스프레드시트를 확인하세요!")
+        target_sheet.update(range_name=range_string, values=chunk)
+        print(f"  └ [진행] {start_row:,} ~ {end_row:,} 행 적재 완료")
+
+    print(f"\n✨ 모든 프로세스가 성공적으로 종료되었습니다. '상품명_중복제거2' 시트에 최종 반영되었습니다.")
 
 if __name__ == "__main__":
-    process_product_pipeline()
+    main()
