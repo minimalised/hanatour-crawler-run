@@ -67,19 +67,18 @@ def main():
     # 4. '상품명_중복제거2' 시트에 즉시 적재 공간 확보
     print("💾 3. '상품명_중복제거2' 시트에 일괄 적재 시작...")
     
-    # 💡 데이터 양보다 여유 있게 5,000행 더 추가하되, 최소 50,000행 크기 확보
-    required_rows = max(total_rows + 5000, 50000) 
+    # 💡 셀 개수 제한(1,000만 개)을 넘지 않도록 딱 필요한 만큼만(실제 데이터 행 수) 지정합니다.
+    required_rows = total_rows
     
     try:
         target_sheet = doc.worksheet("상품명_중복제거2")
         target_sheet.clear()
         
-        # ⚠️ 기존 시트가 10,000행 등으로 작다면, 적재 전 미리 필요한 만큼 늘려줍니다.
-        if target_sheet.row_count < required_rows:
-            target_sheet.resize(rows=required_rows, cols=len(header))
-        print(f"🧹 기존 '상품명_중복제거2' 시트를 비우고 크기를 {required_rows:,}행으로 늘렸습니다.")
+        # ⚠️ 정확한 행 수와 열 수로 리사이즈하여 불필요한 빈 셀을 최소화합니다.
+        target_sheet.resize(rows=required_rows, cols=len(header))
+        print(f"🧹 기존 '상품명_중복제거2' 시트를 비우고 크기를 딱 맞게 {required_rows:,}행으로 조정했습니다.")
     except gspread.exceptions.WorksheetNotFound:
-        # 새로 생성 시 처음부터 넉넉한 크기로 생성합니다.
+        # 새로 생성할 때도 딱 필요한 만큼만 크기를 지정합니다.
         target_sheet = doc.add_worksheet(title="상품명_중복제거2", rows=required_rows, cols=len(header))
         print(f"🆕 '상품명_중복제거2' 시트를 {required_rows:,}행 크기로 새로 생성했습니다.")
         
