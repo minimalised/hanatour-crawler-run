@@ -9,6 +9,9 @@ jobs:
   build_and_run:
     runs-on: ubuntu-latest
 
+  # 💡 팁: 전체 파이프라인 타임아웃을 설정해두면 무한 루프나 API 지연 시 Actions 크레딧이 낭비되는 걸 방지합니다.
+    timeout-minutes: 15 
+
     steps:
     - name: 저장소 코드 체크아웃
       uses: actions/checkout@v4
@@ -17,18 +20,19 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
+        cache: 'pip' # 라이브러리 캐싱을 적용하여 두 번째 실행부터 속도가 빨라집니다.
 
     - name: 필수 라이브러리 설치
       run: |
         python -m pip install --upgrade pip
-        pip install pandas google-api-python-client google-auth-httplib2 google-auth-oauthlib openpyxl
+        # ⚠️ gspread를 반드시 포함해야 pipeline.py가 정상 작동합니다.
+        pip install pandas gspread google-auth openpyxl
 
     - name: 데이터 처리 및 상품명 재조합 실행
       env:
-        # 보내주신 이미지의 Secrets 이름과 100% 일치시켰습니다.
         GOOGLE_JSON_RAW: ${{ secrets.GOOGLE_JSON_RAW }}
         SOURCE_SPREADSHEET_ID: ${{ secrets.SOURCE_SPREADSHEET_ID }}
         TARGET_SPREADSHEET_ID: ${{ secrets.TARGET_SPREADSHEET_ID }}
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }} # 상품명 재조합에 혹시 OpenAI를 쓰신다면 연동되도록 추가
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       run: |
         python pipeline.py
