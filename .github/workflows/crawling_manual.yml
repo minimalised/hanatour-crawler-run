@@ -1,0 +1,33 @@
+name: Hanatour Auto Product Crawler
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # 매일 한국 시간 오전 9시 (UTC 00:00) 자동 실행
+  workflow_dispatch: # 버튼 눌러서 수동 실행 가능
+
+jobs:
+  run-crawler:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install gspread google-auth playwright beautifulsoup4
+        
+    - name: Install Playwright Browsers
+      run: npx playwright install chromium --with-deps
+
+    - name: Run Crawler Script
+      env:
+        GOOGLE_JSON_RAW: ${{ secrets.GOOGLE_JSON_RAW }}
+        SOURCE_SPREADSHEET_ID: ${{ secrets.SOURCE_SPREADSHEET_ID }}
+      run: python crawling_manual.py
