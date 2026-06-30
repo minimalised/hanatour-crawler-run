@@ -12,7 +12,7 @@ from openai import AsyncOpenAI
 # 1. GitHub Secrets 기반 설정 및 초기화
 # ==========================================
 SPREADSHEET_KEY = os.environ.get("SOURCE_SPREADSHEET_ID") 
-SOURCE_SHEET_NAME = "상품명_중복제거"          # 🔄 중복제거된 시트를 타겟으로 일치
+SOURCE_SHEET_NAME = "raw"                        # 🎯 정확하게 raw 시트만 타겟팅
 CACHE_FILE_PATH = "product_cache.json"          
 
 MAX_CONCURRENT_TASKS = 10 
@@ -26,7 +26,7 @@ def calculate_hash(text: str) -> str:
 # 2. 데이터 로드 및 캐시 관리
 # ==========================================
 def load_google_sheet_data():
-    """구글 스프레드시트에서 데이터를 안전하게 로드합니다."""
+    """raw 시트에서 수식으로 불러와진 A~F열 및 기존 G열 데이터를 안전하게 읽어옵니다."""
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     
     google_json_raw = os.environ.get("GOOGLE_JSON_RAW")
@@ -40,24 +40,27 @@ def load_google_sheet_data():
     doc = client.open_by_key(SPREADSHEET_KEY)
     sheet = doc.worksheet(SOURCE_SHEET_NAME)
     
+    print(f"⏳ '{SOURCE_SHEET_NAME}' 시트에서 수식 결과 데이터를 가져오는 중...")
     all_values = sheet.get_all_values()
-    if not all_values or len(all_values) <= 1:
-        return sheet, [], all_values[0] if all_values else []
     
+    if not all_values:
+        return sheet, [], []
+        
     headers = all_values[0]
     rows = all_values[1:]
     
     processed_rows = []
-    for idx, row in enumerate(rows, start=2):
-        # ⚠️ IndexError 방지: 행의 길이가 G열(인덱스 6)보다 짧다면 패딩 추가
+    for idx, row in enumerate(rows, start=2): # 2행부터 데이터 시작
+        # G열(인덱스 6)까지 안전하게 읽기 위한 패딩 처리
         while len(row) < 7:
             row.append("")
             
-        p_id = str(row[0]).strip()   # A열: 상품 고유 ID
-        p_name = str(row[1]).strip() # B열: 원본 상품명
-        current_result = str(row[6]).strip() # G열: 기존 결과물
+        p_id = str(row[0]).strip()   # A열: 상품 고유 ID (cd)
+        p_name = str(row[1]).strip() # B열: LET 함수로 가공되어 출력된 원본 상품명 (title)
+        current_result = str(row[6]).strip() # G열: 기존에 적재되어 있던 LLM 결과물
         
-        if p_id and p_name:
+        # ID와 상품명이 모두 존재하는 유효한 행만 처리 대상으로 솎아냄
+        if p_id and p_name and p_id != "id": 
             processed_rows.append({
                 "row_num": idx,
                 "id": p_id,
@@ -110,8 +113,8 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
                                 "5. 출력 형식:\n"
                                 "   - 설명이나 서론, 후론 없이 오직 재구성된 상품명 '딱 한 줄'만 반환할 것.\n\n"
                                 "💡 [출력 예시 참고]\n"
-                                "- 원본: 선착순특가홍콩 4일 실속여행_CHP1002607257C9\n"
-                                "- 추천 결과: 홍콩 중심가 침사추이 4일 패키지 여행 명소 관광 국적기 탑승\n\n"
+                                "- 원본: 대련 3일 시내중심4성급호텔 핫플레이스동방수성 트램탑승 연화산전망대 야시장 특식2회\n"
+                                "- 추천 결과: 대련 시내 중심 4성급 호텔 투어 동방수성 트램 탑승 연화산 전망대 야시장 여행\n\n"
                                 f"{extra_prompt}"
                             )
                         },
@@ -145,12 +148,12 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
 # 4. 메인 오케스트레이터 (전체 흐름 제어)
 # ==========================================
 async def main():
-    print("🛒 1. 구글 스프레드시트 데이터 및 로컬 캐시 로드 중...")
+    print(f"🛒 1. '{SOURCE_SHEET_NAME}' 시트의 LET 수식 결과 추출 및 캐시 확인...")
     sheet, current_products, headers = load_google_sheet_data()
     old_cache = load_cache()
     
     if not current_products:
-        print("ℹ️ 처리할 상품 데이터가 없습니다.")
+        print("ℹ️ 처리할 상품 데이터가 없습니다. 수식이 로딩 중이거나 비어있습니다.")
         return
 
     current_product_ids = {p["id"] for p in current_products}
@@ -177,7 +180,7 @@ async def main():
         if is_new or is_changed or is_missing_result or is_row_shifted:
             targets_to_process.append(p)
             
-    print(f"📊 분석 결과: 전체 {len(current_products):,}개 중")
+    print(f"📊 분석 결과: 현재 raw 시트 수식 데이터 {len(current_products):,}개 중")
     print(f"   - 기존 유지 상품: {len(current_products) - len(targets_to_process):,}개")
     print(f"   - 신규/변경 처리 대상: {len(targets_to_process):,}개")
     
@@ -186,14 +189,14 @@ async def main():
         save_cache(new_cache)
         return
 
-    print(f"🚀 {len(targets_to_process)}개 상품에 대해 비동기 병렬 LLM 처리를 시작합니다...")
+    print(f"🚀 {len(targets_to_process)}개 상품에 대해 비동기 병렬 LLM 상품명 재구성 시작...")
     tasks = [call_llm_with_retry(target, confirmed_pool) for target in targets_to_process]
     llm_results = await asyncio.gather(*tasks)
     
-    # 💡 최적화 매핑 딕셔너리 생성
-    update_mapping = {target["row_num"]: final_name for target, final_name in zip(targets_to_process, llm_results)}
+    # 💡 고유 ID(상품코드)를 key로 매핑 딕셔너리 생성하여 수식의 유동성 방어
+    id_update_mapping = {target["id"]: final_name for target, final_name in zip(targets_to_process, llm_results)}
     
-    # 캐시 데이터 최적화 업데이트
+    # 캐시 데이터 갱신
     for target, final_name in zip(targets_to_process, llm_results):
         new_cache[target["id"]] = {
             "origin_name": target["name"],
@@ -201,42 +204,41 @@ async def main():
             "recomposed_name": final_name
         }
 
-    # 💾 [수정] 대용량 안전 벌크 업로드 구현
-    print("💾 구글 스프레드시트 G열에 대용량 벌크 데이터 적재를 준비 중...")
+    # 💾 G열 안전 적재 시작 (A~F열 수식은 절대 건드리지 않음)
+    print("💾 raw 시트 G열 영역에 순수 벌크 데이터 적재를 준비 중...")
     
-    # 헤더 행 확장 (G열 이름이 정의되어 있지 않다면 'recomposed_title' 등으로 지정)
-    if len(headers) < 7:
-        sheet.update_cells([gspread.cell.Cell(row=1, col=7, value="recomposed_title")])
-    
-    # 전체 시트의 G열 구조를 안전하게 빌드
     max_row_num = max(p["row_num"] for p in current_products)
     g_col_output = []
     
-    # G2부터 최하단 행까지의 데이터를 채워 넣음
+    # G2부터 최하단 행까지 순치적으로 매핑 결과 리스트 빌드
     for r in range(2, max_row_num + 1):
-        if r in update_mapping:
-            g_col_output.append([update_mapping[r]])
+        matching_product = next((p for p in current_products if p["row_num"] == r), None)
+        
+        if matching_product:
+            p_id = matching_product["id"]
+            if p_id in id_update_mapping:
+                g_col_output.append([id_update_mapping[p_id]])
+            else:
+                g_col_output.append([matching_product["current_result"]])
         else:
-            # 타겟이 아니면 현재 시트에 들어있는 값을 그대로 유지
-            matching_product = next((p for p in current_products if p["row_num"] == r), None)
-            val = matching_product["current_result"] if matching_product else ""
-            g_col_output.append([val])
+            g_col_output.append([""]) # 데이터가 유실되거나 비어있는 행 대응
             
-    # ⚡ 1만 행 단위로 끊어서 G열에 고속 덮어쓰기 (할당량 제약 극복)
+    # ⚡ 1만 행 단위 청크로 끊어서 오직 G열에만 고속 쓰기 실행
     chunk_size = 10000
     total_output_len = len(g_col_output)
-    print(f"⚡ 총 {total_output_len:,}행의 G열 데이터를 {chunk_size:,}행씩 나누어 업데이트합니다.")
+    print(f"⚡ 총 {total_output_len:,}행의 G열 상품명 리스트를 {chunk_size:,}행씩 분할 업로드합니다.")
     
     for i in range(0, total_output_len, chunk_size):
         chunk = g_col_output[i:i + chunk_size]
-        start_row = i + 2  # G2 행부터 시작하므로
+        start_row = i + 2  # G2 행부터 인덱스 매핑 시작
         range_string = f"G{start_row}"
         
+        # ⚠️ 중요: A:F열 수식을 침범하지 않기 위해 "G{start_row}"로 명시적 분할 적재
         sheet.update(range_name=range_string, values=chunk)
-        print(f"  └ [G열 적재 완료] {start_row:,} ~ {start_row + len(chunk) - 1:,} 행 완료")
+        print(f"   └ [G열 단독 업로드] {start_row:,} ~ {start_row + len(chunk) - 1:,} 행 완료")
 
     save_cache(new_cache)
-    print("📝 로컬 캐시 파일(product_cache.json) 갱신 완료!")
+    print("📝 로컬 캐시 파일(product_cache.json) 동기화 완료!")
 
 if __name__ == "__main__":
     asyncio.run(main())
