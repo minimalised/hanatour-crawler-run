@@ -2,6 +2,7 @@ import os
 import json
 import hashlib
 import asyncio
+import re  # 💡 정규식 처리를 위해 추가
 from typing import List, Dict, Set
 
 import gspread
@@ -21,6 +22,23 @@ aclient = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
 
 def calculate_hash(text: str) -> str:
     return hashlib.md5(text.encode('utf-8')).hexdigest()
+
+def clean_origin_name(text: str) -> str:
+    """💡 LLM에 보내기 전, 상품 코드 및 불필요한 데이터 오염을 전처리하는 함수"""
+    if not text:
+        return ""
+    
+    # 1. 영문+숫자가 혼합된 마스터 상품코드 패턴 제거 (예: _CAB312260730KEA, ATP304260730CIA 등)
+    #    언더바(_)로 시작하거나 시작하지 않는 8자 이상의 영숫자 조합 제거
+    text = re.sub(re.compile(r'_?[A-Za-z0-9]{8,}'), '', text)
+    
+    # 2. URL 링크나 카테고리 번호가 상품명 뒤에 엉겨 붙어 들어오는 경우 차단
+    text = re.sub(re.compile(r'https?://\S+'), '', text) # URL 제거
+    text = re.sub(re.compile(r'\b\d{8,}\b'), '', text)    # 8자리 이상 순수 숫자 제거
+    
+    # 3. 연속된 공백 하나로 정리
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 
 # ==========================================
 # 2. 데이터 로드 및 캐시 관리
@@ -85,7 +103,13 @@ def save_cache(cache_data: Dict[str, Dict]):
 # ==========================================
 async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
     async with semaphore:
-        origin_name = target["name"]
+        # 💡 전처리 함수를 거쳐 맑은 데이터만 추출
+        origin_name = clean_origin_name(target["name"])
+        
+        # 만약 전처리 후 이름이 너무 짧거나 비어버렸다면 원본 백업본 활용
+        if not origin_name or len(origin_name) < 3:
+            origin_name = target["name"]
+
         retry_count = 0
         extra_prompt = ""
         
