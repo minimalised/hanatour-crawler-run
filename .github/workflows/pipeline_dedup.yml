@@ -1,4 +1,4 @@
-name: Product List Pipeline (De-duplication & Remake)
+name: [중복제거] 상품명 기준 중복제거
 
 on:
   repository_dispatch:
