@@ -1,7 +1,7 @@
 name: Daily Hanatour Crawling
 
 on:
-  workflow_dispatch:      # 수동 실행 버튼 활성화
+  workflow_dispatch:      
 
 jobs:
   build:
@@ -24,12 +24,11 @@ jobs:
           python -m pip install pandas gspread google-auth playwright playwright-stealth openai
           python -m playwright install chromium
 
-      # 💡 단수형 구조로 완벽하게 4개의 보안 통행증을 주입하며, crawling.py를 실행합니다.
       - name: Run Hanatour New Crawler
         env:
           GOOGLE_JSON_RAW: ${{ secrets.GOOGLE_JSON_RAW }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           SOURCE_SPREADSHEET_ID: ${{ secrets.SOURCE_SPREADSHEET_ID }}
-          TARGET_SPREADSHEET_ID: ${{ secrets.TARGET_SPREADSHEET_ID }} # 🌟 단수형 구조로 완벽 매칭
+          TARGET_SPREADSHEET_ID: ${{ secrets.TARGET_SPREADSHEET_ID }}
         run: |
-          python -u crawling.py # 🌟 실제 파일명인 crawling.py로 고정 완료
+          python -u crawl_daily.py
