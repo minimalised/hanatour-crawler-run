@@ -1,4 +1,4 @@
-name: Hanatour Manual Product Crawler
+name: [크롤링] 하나투어 단일 상품 수집
 
 on:
   schedule:
