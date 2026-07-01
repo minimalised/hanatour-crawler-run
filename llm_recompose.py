@@ -68,24 +68,6 @@ def extract_meta_and_clean(title: str):
     return departure, duration, title_clean
 
 # ==========================================
-# [사후 검증 가드 함수]
-# ==========================================
-def validate_naver_title(title: str) -> bool:
-    """최종 생성된 타이틀의 비정상 마무리를 검사하는 품질 하드 가드"""
-    if not title:
-        return False
-        
-    # 문장 끝이 '까', '제', '포', '거' 등 한 글자 조사나 단어로 조기 짤림 종결되는 버그 완벽 검출
-    if re.search(r'\s[가-힣]$', title) or title.endswith(("까", "포", "제", "거", "포함", "제공", "특전")):
-        return False
-        
-    # 최종 결과물에 섞이지 말아야 할 스팸어 2중 체크
-    forbidden = ["추천", "베스트", "대박", "특가", "명문", "골프장맵", "이용권", "2색상품", "쏙쏙", "매력", "두도시"]
-    if any(word in title for word in forbidden):
-        return False
-    return True
-
-# ==========================================
 # [구글 시트 연동 로직 - 상위 100개 고정형]
 # ==========================================
 def load_google_sheet_data_fixed_100():
@@ -101,13 +83,10 @@ def load_google_sheet_data_fixed_100():
     doc = client.open_by_key(SPREADSHEET_KEY)
     sheet = doc.worksheet(SOURCE_SHEET_NAME)
     
-    # 🧪 [테스트 가드] 데이터가 무한 증식하는 것을 막기 위해 상위 딱 100개 행(2행~101행) 영역만 물리적으로 고정 호출
-    # A열(ID), B열(원본상품명), G열(최종결과)을 포함하기 위해 G101까지 범위를 하드 코딩하여 가져옵니다.
     cell_range = sheet.get("A2:G101")
     
     processed_rows = []
     for idx, row in enumerate(cell_range, start=2):
-        # 열의 길이가 부족할 경우 G열까지 빈 문자열 패딩
         while len(row) < 7:
             row.append("")
         p_id = str(row[0]).strip()   
@@ -124,120 +103,84 @@ def load_google_sheet_data_fixed_100():
     return sheet, processed_rows
 
 # ==========================================
-# [LLM 호출 및 비동기 엔진 - 차별화 자산 보존형]
+# 🛑 무한 과금 원천 차단형 비동기 LLM 엔지니어링 (1대1 단발 호출)
 # ==========================================
 async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
+    """while 루프 및 중복체크 JSON 스키마를 완전히 빼서 돈 날릴 확률을 0%로 통제합니다."""
     async with semaphore:
         departure, duration, cleaned_title = extract_meta_and_clean(target["name"])
         
-        # 원본에서 마케팅 핵심 옵션(노쇼핑/노팁/노옵션)만 정확하게 격리 분리
         options = ""
         if "NO쇼핑" in target["name"] or "노쇼핑" in target["name"]: options += "노쇼핑 "
         if "NO팁" in target["name"] or "노팁" in target["name"]: options += "노팁 "
         if "NO옵션" in target["name"] or "노옵션" in target["name"]: options += "노옵션 "
         options = options.strip()
 
-        # [차별화 보존 프롬프트] 획일화된 도배성 제목을 양산하지 않도록 지시
+        # 💡 피드백을 반영한 정교한 네이버 SEO 및 차별화 보존 프롬프트
         prompt = f"""
-당신은 네이버 쇼핑 최상위 노출 규격을 준수하는 여행 전문 퍼포먼스 마케팅 카피라이터입니다.
-지역과 일정이 같더라도 상품들끼리 제목이 똑같이 복제되어 출력되는 로봇 같은 행위를 엄격히 금지합니다.
-[원본 핵심어]에 살아있는 **해당 상품만의 고유한 자산(예: 쉐라톤, 크라운플라자, 풀만, 홀리데이인, 아난티, 대한항공, 1일자유 등 고유 식별 명사)**을 절대로 생략하지 말고 최종 명사구에 반드시 포함하여 다른 상품들과 확실하게 차별화하십시오.
+너는 네이버 쇼핑 입점 및 검색 최적화(SEO) 지침을 완벽하게 숙지한 글로벌 커머스 상품명 정제 전문가야.
+지저분하고 노이즈가 많은 원본 여행 상품명을 분석하여, 네이버 쇼핑 검색 엔진에 즉시 노출 가능한 형태의 깨끗하고 매력적인 상품명으로 재구성해라.
 
-[입력 정형 데이터]
-- 지정 출발지: "{departure}"
-- 여행 일정: "{duration}"
-- 원본 핵심어: "{cleaned_title}"
-- 필수 옵션 문구: "{options}"
+반드시 아래 [⚠️ 4대 핵심 제약 가이드라인]을 한 치의 오차도 없이 완벽하게 준수해야 한다.
 
-[🧱 1단계: 명사구 조합 어순 공식]
-최종 상품명은 조사나 설명조의 문장이 아니어야 하며, 반드시 아래의 띄어쓰기 조합 공식을 물리적으로 따라야 합니다.
-- 구조 공식: {{지정 출발지}} + {{주요 여행 지역/도시명}} + {{여행 일정}} + {{★해당 상품 고유의 자산(호텔명/항공사/핵심특전 명사)★}} + {{필수 옵션 문구}} + 패키지여행 (또는 자유여행/골프/크루즈 상품 성격에 맞는 종결어)
+지정 출발지: "{departure}"
+여행 일정: "{duration}"
+원본 핵심어: "{cleaned_title}"
+필수 옵션 문구: "{options}"
 
-[📋 2단계: 완벽한 차별화 생성을 위한 퓨샷 예시 (Few-Shot)]
-지역과 일정이 완벽히 겹치더라도 고유 식별 자산에 따라 제목이 서로 완벽하게 분리되어야 네이버 SEO 어뷰징에 걸리지 않습니다.
+⚠️ [핵심 제약 가이드라인]
+1. 글자 수 엄수 (공백 포함 32자 ~ 45자)
+   - 최종 결과물의 총 글자 수는 공백을 포함하여 반드시 '32자 이상', '45자 이하'여야 한다.
+   - ★45자를 단 한 자라도 초과하거나 32자 미만으로 출력하는 것을 절대 금지한다.★
 
-■ 예시 1 (호텔명에 따른 명확한 상품 간 식별성 확보)
-- 원본 핵심어: "옌타이 연태 3일 월드체인 쉐라톤 전객실 오션뷰 금사탄 해변인근"
-- 출력 결과: {{"refined_title": "옌타이 연태 3일 쉐라톤 전객실 오션뷰 패키지여행"}}
-- 원본 핵심어: "옌타이 연태 3일 월드체인 크라운플라자 시내중심 대학가 인근 자유여행 최적"
-- 출력 결과: {{"refined_title": "옌타이 연태 3일 크라운플라자 시내중심 자유여행"}}
+2. 문장부호 및 특수문자 전면 제거
+   - 대괄호([, ]), 소괄호((, )), 슬래시(/), 쉼표(,), 물결(~), 플러스(+), 언더바(_) 등 모든 기호와 문장부호를 100% 제거해라.
+   - 오직 '한글', '숫자', '영문', '띄어쓰기'만 사용해서 상품명을 구성해야 한다.
 
-■ 예시 2 (항공사 및 일정 자산 분리 보존)
-- 원본 핵심어: "오키나와 4일 대한항공 전일정나하숙박 1일자유 츄라우미수족관"
-- 출력 결과: {{"refined_title": "오키나와 4일 대한항공 전일정 나하숙박 1일자유 패키지여행"}}
+3. 시스템 및 광고성 노이즈 전면 도려내기
+   - '[출발확정]', '[한정특가]', '[스마트초이스]' 같은 대괄호 문구를 무조건 삭제해라.
+   - '실속여행', '대박특가', '최저가보장', '인기No.1', '베스트셀러' 등 유치한 광고성 홍보 단어는 흔적도 없이 지워라.
 
-[⚠️ 3단계: 핵심 제약 가이드라인]
-1. 🚫 **단어 절대 절단 금지**: 글자 수 제한에 구애받지 마십시오. 문장 끝이 '까', '제', '포', '거' 같이 한 글자만 남고 뚝 끊기게 만드는 행위는 절대 금지합니다. 문장이 길어져도 상관없으니 단어를 완벽한 형태로 종결하십시오.
-2. 🚫 **기계적 복사 금지**: 모든 오키나와 상품, 모든 제남 골프 상품을 복사 붙여넣기 한 것처럼 똑같은 제목으로 세팅하지 마십시오. 개별 고유 자산을 뼈대에 넣어 다채롭게 구성하십시오.
-3. 🚫 **알파벳 및 한자 출력 금지**: 영문이나 한자는 단 한 글자도 결과물에 섞이지 않게 하십시오. 범위 기호는 오직 대시(-)만 허용합니다.
+4. 정보 보완 및 명사구 조합 구조 공식
+   - 뼈대 구조: {{지정 출발지}} + {{주요 여행 지역/도시명}} + {{여행 일정}} + {{★해당 상품 고유의 자산(호텔명/항공사/핵심특전 명사)★}} + {{필수 옵션 문구}} + 패키지여행 (또는 자유여행/골프 상품 성격에 맞는 종결어)
+   - 만약 글자 수(최소 32자)를 채우지 못할 경우, 해당 여행지의 대표 핵심 명소, 항공사, 호텔 정보 등 실용적인 검색 키워드를 조합하여 채워라.
+   - 주의사항, '추천 결과:' 같은 불필요한 시스템 지시어를 앞뒤에 삽입하는 것을 절대 금지한다.
+
+5. 출력 형식
+   - 부연 설명, 서론, 후론은 일체 사절한다. 오직 네이버 규격에 맞춰 재구성된 상품명 '딱 한 줄'만 출력해라.
+
+💡 [작업 참고 예시]
+- 원본: [출발확정] [대구출발] 다낭 5일 미케비치5성 씨푸드특식바나힐호이안투어시티투어
+- 결과: 대구출발 다낭 5일 미케비치 5성 호텔 씨푸드 바나힐 호이안 시티 투어 패키지
 """
 
-        json_schema_format = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "naver_seo_unique_flexible_schema",
-                "strict": True,
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "refined_title": {
-                            "type": "string",
-                            "description": "상품 간 고유한 차별화 식별 자산이 온전히 보존되고 단어 잘림이 없는 최종 정제 상품명"
-                        }
-                    },
-                    "required": ["refined_title"],
-                    "additionalProperties": False
-                }
-            }
-        }
-
-        retry_count = 0
-        while retry_count < 3:
-            try:
-                response = await aclient.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": "You are a helpful assistant that outputs compliant JSON based on the provided schema."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    response_format=json_schema_format,
-                    temperature=0.3 # 고유 자산 매핑 자율성과 다채로운 변별성을 확보하기 위해 온도 미세 조율
-                )
-                
-                res_json = json.loads(response.choices[0].message.content)
-                suggested_name = res_json.get("refined_title", "").strip()
-                
-                # 특수문자 사후 공백 처리 및 출발지 결합 보정
-                suggested_name = re.sub(r'[\[\]_,\!#+/\(\)A-Za-z]', ' ', suggested_name)
-                if departure and not suggested_name.startswith(departure):
-                    clean_opt = suggested_name.replace(departure.replace("[","").replace("]",""), "")
-                    clean_opt = re.sub(r'^[ \t\s\-]+', '', clean_opt).strip()
-                    suggested_name = f"{departure} {clean_opt}"
-                
-                suggested_name = re.sub(r'\s+', ' ', suggested_name).strip()
-                
-                # 사후 가드 통과 시 풀에 등록 후 즉시 반환
-                if suggested_name not in confirmed_pool and validate_naver_title(suggested_name):
-                    confirmed_pool.add(suggested_name)
-                    return suggested_name
-                
-                retry_count += 1
-            except Exception:
-                await asyncio.sleep(0.3)
-                retry_count += 1
-                
-        # 3회 실패 시 발동할 하드웨어 Fallback 보정 엔진 (고유 자산 최대한 유지 보존)
-        fallback_name = cleaned_title
-        if departure: fallback_name = f"{departure} {fallback_name}"
-        if options: fallback_name = f"{fallback_name} {options}"
-        
-        # 종결어 누락 방지 안전선
-        if not any(fallback_name.endswith(word) for word in ["패키지여행", "자유여행", "크루즈", "골프", "여행"]):
-            fallback_name = f"{fallback_name} 패키지여행"
+        try:
+            # 💡 딱 1번만 찌르고 끝내도록 변경 (과금 방지)
+            response = await aclient.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=80,
+                temperature=0.3
+            )
             
-        final_fallback = re.sub(r'\s+', ' ', fallback_name).strip()
-        confirmed_pool.add(final_fallback)
-        return final_fallback
+            suggested_name = response.choices[0].message.content.strip()
+            
+            # 특수문자 사후 공백 처리 안전장치
+            suggested_name = re.sub(r'[\[\]_,\!#+/\(\)A-Za-z]', ' ', suggested_name)
+            suggested_name = re.sub(r'\s+', ' ', suggested_name).strip()
+            
+            return suggested_name
+            
+        except Exception:
+            # 에러 시 대비할 안전 Fallback 구조
+            fallback_name = cleaned_title
+            if departure: fallback_name = f"{departure} {fallback_name}"
+            if options: fallback_name = f"{fallback_name} {options}"
+            if not any(fallback_name.endswith(word) for word in ["패키지여행", "자유여행", "크루즈", "골프", "여행"]):
+                fallback_name = f"{fallback_name} 패키지여행"
+            return re.sub(r'\s+', ' ', fallback_name).strip()
 
 # ==========================================
 # [메인 실행 엔진]
@@ -250,13 +193,12 @@ async def main():
         print("ℹ️ 처리할 상위 100개 상품 데이터가 시트에 존재하지 않습니다.")
         return
 
-    # 테스트 목적상, 상위 100개 고정 영역 내에 있는 모든 상품을 무조건 새로 정제하도록 타겟팅 배정
     targets_to_process = current_products
+    confirmed_pool = set() # 구조 호환용 빈 세트 유지
     
-    confirmed_pool = set()
     print(f"📊 물리 테스트 타겟팅: 정확히 시트 상위 {len(targets_to_process)}개 행을 정밀 정제합니다.")
 
-    print(f"🚀 차별화 자산 매핑 비동기 병렬 API 요청 중...")
+    print(f"🚀 차별화 자산 매핑 비동기 병렬 API 요청 중 (과금 잠금 제어)...")
     tasks = [call_llm_with_retry(target, confirmed_pool) for target in targets_to_process]
     llm_results = await asyncio.gather(*tasks)
     
@@ -265,7 +207,6 @@ async def main():
     print("💾 시트 G열 상위 100칸 영역 정밀 동기화 적재 중...")
     g_col_output = []
     
-    # 2행부터 101행까지만 정확하게 출력값 리스트를 빌드
     for target in current_products:
         p_id = target["id"]
         if p_id in id_update_mapping:
@@ -273,7 +214,6 @@ async def main():
         else:
             g_col_output.append([target["current_result"]])
             
-    # 정확히 2행부터 꽂히도록 범위 스트링 고정 가드
     range_string = f"G2:G{2 + len(g_col_output) - 1}"
     sheet.update(range_string, g_col_output)
     print(f"   └ [테스트 가드 적재 완수] 시트 {range_string} 영역 동기화 완료.")
