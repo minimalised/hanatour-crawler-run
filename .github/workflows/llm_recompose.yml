@@ -1,4 +1,4 @@
-name: Daily Product LLM Recomposition
+name: [LLM가공] 네이버 쇼핑 SEO 상품명 재구성
 
 on:
   workflow_run:
