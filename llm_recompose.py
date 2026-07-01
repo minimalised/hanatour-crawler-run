@@ -20,53 +20,54 @@ semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
 aclient = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
 
 # ==========================================
-# [데이터 전처리 함수 - 출발지 버그 완벽 수정 버전]
+# [데이터 전처리 함수 - 골프 CC 보호 및 출발지 버그 차단]
 # ==========================================
 def extract_meta_and_clean(title: str):
     """
-    원본에 지정 도시 이름([대구출발], 청주출발 등)이 명학하게 박혀있는 경우에만 출발지를 추출합니다.
-    원본에 출발 도시가 없으면 departure를 무조건 빈 값("")으로 밀어내어 유령 출발지 생성을 차단합니다.
+    골프 자산(성문안CC 등)을 완벽하게 보호하고 출발 도시가 없는 경우 빈 값("")을 리턴합니다.
     """
     if not title:
         return "", "", ""
         
-    # URL 및 뭉개진 링크 문자열 완전 제거
+    # URL 및 링크 제거
     title_clean = re.sub(r'https?://\S+', ' ', title)
     
-    # 💡 [버그 완벽 수정] 공백 치환 전, "순수 원본 문자열(title)"에서 출발공항 패턴을 칼같이 추출
+    # 1. 출발공항 패턴을 '순수 원본 문자열(title)'에서 엄격하게 정량 추출
     airport_match = re.search(r'\[?(청주|대구|부산|인천|무안|양양|제주)\]?\s*출발', title)
     if airport_match:
         city = airport_match.group(1).strip()
         departure = f"[{city}출발]"
     else:
-        departure = "" # 원본에 없으면 절대 지어내지 않고 빈 값 고정
+        departure = "" # 없으면 철저히 공백 고정
 
-    # 2. 일정(박/일) 정밀 추출 (ex: 4일, 3박5일)
+    # 2. 일정(박/일) 추출
     duration_match = re.search(r'\d+박\s*\d+일|\d+일|\d+박\d+일|\d+~\d+일|\d+-\d+일', title_clean)
     duration = duration_match.group(0).strip() if duration_match else ""
-    duration = duration.replace('~', '-') # 물결 기호 대시로 치환
+    duration = duration.replace('~', '-') 
 
-    # 3. 알파벳 항공 코드 및 5자리 이상의 의미 없는 시스템 카테고리 숫자 코드 박멸
-    title_clean = re.sub(r'[A-Za-z]', ' ', title_clean)
+    # 3. [골프 핵심 자산] 알파벳 대소문자 CC가 지워지지 않도록 선제적으로 대문자 치환 보호
+    title_clean = re.sub(r'\bCC\b|\bcc\b|Cc|cC', 'CC', title_clean)
+    
+    # 4. 의미 없는 5자리 이상 숫자 코드 박멸
     title_clean = re.sub(r'\b\d{5,}\b', ' ', title_clean)
     
-    # 4. 특수문자, 대괄호 기호 전면 청소 (슬래시/ 와 대시- 는 지역 및 일정 구분을 위해 보존)
-    title_clean = re.sub(r'[^가-힣0-9\s\-\/]', ' ', title_clean)
-
-    # 5. [6, 7번 및 5번 타겟명 완전 삭제] 네이버 SEO를 저해하고 제목을 조잡하게 만드는 스팸 블랙리스트
+    # 5. 블랙리스트 광고 단어 정밀 도려내기 (자산 가치를 훼손하는 수식어 전면 차단)
     kill_words = [
-        # 7번 광고 노이즈 단어
         "2색상품", "2색매력", "3색골프", "다색골프", "두도시한번에", "두도시", "한번에", "시티", 
-        "골프장맵", "거리측정", "이용권", "추천", "쏙쏙", "핵심관광쏙쏙", "대박", "특가", "명문", "지역",
+        "골프장맵", "거리측정", "이용권", "추천", "명문골프장", "원주명문골프장", "명문", "지역", "쏙쏙", "핵심관광쏙쏙",
         "인기선택관광포함", "1인2만원제공", "무료업그레이드", "올어바웃", "도파민팡팡", "스마트초이스", "최저가도전", "여름맞이특가",
-        # 6번 사은품 및 현지 식사/체험 단어
         "스테이크정식", "딤섬", "훠궈", "비파원훠궈", " Beer LAO 제공", "서핑체험", "얀바루캐녀닝", 
         "보트체험", "캠프파이어", "카발란위스키DIY", "네일아트", "스파", "발마사지", "우유비누", "맥주박물관", "식사포함", "음료교환권",
-        # 5번 애매한 타겟/컨셉 세그먼트 단어 (지시대로 우선 제외 조치)
         "2030전용", "2030 전용", "4050 XTeen", "4050", "깐부여행", "대디앤미", "아빠와자녀한정", "1인1실", "3인 가족 전용", "인솔자동행", "세미팩"
     ]
     for kw in kill_words:
         title_clean = title_clean.replace(kw, " ")
+
+    # 6. 특수문자 청소 (한글, 숫자, 공백, 슬래시, 대시 및 보호된 골프장 영문 'CC'만 허용)
+    title_clean = re.sub(r'[^가-힣0-9\s\-\/[A-Z]]', ' ', title_clean)
+    
+    # 7. CC를 제외한 나머지 낱개 영문 시스템 문자들만 청소
+    title_clean = re.sub(r'\b(?![CC]\b)[A-Za-z]\b', ' ', title_clean)
 
     title_clean = re.sub(r'\s+', ' ', title_clean).strip()
     return departure, duration, title_clean
@@ -111,20 +112,22 @@ def load_google_sheet_data_fixed_100():
 # ==========================================
 async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
     async with semaphore:
-        departure, duration, cleaned_title = extract_meta_and_clean(target["name"])
+        # 💡 실패 대비 백업 데이터 확보
+        raw_original_name = target["name"]
+        departure, duration, cleaned_title = extract_meta_and_clean(raw_original_name)
         
         options = ""
-        if "NO쇼핑" in target["name"] or "노쇼핑" in target["name"]: options += "노쇼핑 "
-        if "NO팁" in target["name"] or "노팁" in target["name"]: options += "노팁 "
-        if "NO옵션" in target["name"] or "노옵션" in target["name"]: options += "노옵션 "
+        if "NO쇼핑" in raw_original_name or "노쇼핑" in raw_original_name: options += "노쇼핑 "
+        if "NO팁" in raw_original_name or "노팁" in raw_original_name: options += "노팁 "
+        if "NO옵션" in raw_original_name or "노옵션" in raw_original_name: options += "노옵션 "
         options = options.strip()
 
-        # 💡 GPT가 퓨샷 예시를 보고 '대구출발'을 오인 복사하지 않도록 예시 변수화 처리
+        # 💡 라벨링 뇌절 전면 금지 지시 및 자산 보존 하드캐리 프롬프트
         prompt = f"""
-당신은 네이버 쇼핑 입점 및 검색 최적화(SEO) 지침을 완벽하게 숙지한 글로벌 커머스 상품명 정제 전문가야.
-지저분하고 노이즈가 많은 원본 여행 상품명을 분석하여, 네이버 쇼핑 검색 엔진에 즉시 노출 가능한 형태의 깨끗하고 매력적인 상품명으로 재구성해라.
+당신은 네이버 쇼핑 입점 및 검색 최적화(SEO) 지침을 완벽하게 숙지한 글로벌 커머스 상품명 정제 전문가입니다.
+원본 핵심어의 불필요한 미사여구를 제거하되, 해당 상품 고유의 가치 자산인 명사(골프장명, 리조트/호텔명, 항공사)는 무조건 최종 상품명에 누출시켜 네이밍을 완성하십시오.
 
-반드시 아래 [⚠️ 4대 핵심 제약 가이드라인]을 한 치의 오차도 없이 완벽하게 준수해야 한다.
+반드시 아래 [⚠️ 핵심 제약 가이드라인]을 단 한치도 어기지 말고 그대로 이행하십시오.
 
 지정 출발지: "{departure}"
 여행 일정: "{duration}"
@@ -132,31 +135,23 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
 필수 옵션 문구: "{options}"
 
 ⚠️ [핵심 제약 가이드라인]
-1. 글자 수 엄수 (공백 포함 32자 ~ 45자)
-   - 최종 결과물의 총 글자 수는 공백을 포함하여 반드시 '32자 이상', '45자 이하'여야 한다.
-   - ★45자를 단 한 자라도 초과하거나 32자 미만으로 출력하는 것을 절대 금지한다.★
+1. 출력 형식 절대 엄수:
+   - '원본 핵심어:', '출력 결과:', '결과:', 'refined_title' 같은 지시어나 라벨링 텍스트를 절대로 포함하지 마라.
+   - 주의사항, 앞말, 뒷말, 따옴표 등을 일체 배제하고 오직 네이버 규격에 맞춰 재구성된 순수 상품명 '딱 한 줄'만 단독 출력해라.
 
-2. 문장부호 및 특수문자 전면 제거
-   - 대괄호([, ]), 소괄호((, )), 슬래시(/), 쉼표(,), 물결(~), 플러스(+), 언더바(_) 등 모든 기호와 문장부호를 100% 제거해라.
-   - 오직 '한글', '숫자', '영문', '띄어쓰기'만 사용해서 상품명을 구성해야 한다.
+2. 고유 고유자산 삭제 절대 금지:
+   - 입력된 데이터에 포함된 구체적인 골프장 이름(예: 성문안CC, 봉래군정CC 등), 리조트/호텔명, 특정 항공사명은 변별력을 확보하는 핵심 키워드이므로 절대로 누락하거나 변경하지 마라.
 
-3. 시스템 및 광고성 노이즈 전면 도려내기
-   - '[출발확정]', '[한정특가]', '[스마트초이스]' 같은 대괄호 문구를 무조건 삭제해라.
-   - '실속여행', '대박특가', '최저가보장', '인기No.1', '베스트셀러' 등 유치한 광고성 홍보 단어는 흔적도 없이 지워라.
+3. 글자 수 엄수 (공백 포함 32자 ~ 45자):
+   - 최종 결과물의 총 글자 수는 공백을 포함하여 반드시 '32자 이상', '45자 이하'여야 한다. (45자 절대 초과 금지)
+   - 만약 자산을 다 포함하고도 32자 미만이라면, 해당 지역의 유명 명소나 '라운딩', '라운드', '골프여행' 등의 키워드를 조합하여 32자 이상으로 채워라.
 
-4. 정보 보완 및 명사구 조합 구조 공식
-   - 뼈대 구조: {{지정 출발지}} + {{주요 여행 지역/도시명}} + {{여행 일정}} + {{★해당 상품 고유의 자산(호텔명/항공사/핵심특전 명사)★}} + {{필수 옵션 문구}} + 패키지여행 (또는 자유여행/골프 상품 성격에 맞는 종결어)
-   - 맨 앞에는 입력된 [지정 출발지] 데이터만 넣어야 하며, 없는 경우 절대로 지어내어 넣지 말고 생략해라.
-   - 주의사항, '추천 결과:' 같은 불필요한 시스템 지시어를 앞뒤에 삽입하는 것을 절대 금지한다.
+4. 문장부호 및 특수문자 전면 제거:
+   - 모든 기호와 대괄호를 100% 제거하고 오직 '한글', '숫자', '영문', '띄어쓰기'만 사용해라.
 
 💡 [작업 참고 예시]
-- 지정 출발지: "[청주출발]"
-- 원본 핵심어: "옌타이 연태 3일 월드체인 쉐라톤 전객실 오션뷰"
-- 출력 결과: [청주출발] 옌타이 연태 3일 쉐라톤 전객실 오션뷰 패키지여행
-
-- 지정 출발지: ""
-- 원본 핵심어: "오키나와 4일 대한항공 전일정나하숙박 1일자유"
-- 출력 결과: 오키나와 4일 대한항공 전일정 나하숙박 1일자유 패키지여행
+원본: 강원 원주 골프 2일 36홀 원주 골프장 성문안CC
+결과: 강원 원주 골프 2일 36홀 성문안CC 라운딩 골프여행
 """
 
         try:
@@ -166,15 +161,19 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=80,
-                temperature=0.3
+                temperature=0.2
             )
             
             suggested_name = response.choices[0].message.content.strip()
             
+            # 🛑 [사후 가드] 혹시라도 GPT가 말 안 듣고 말머리나 라벨을 달고 나왔을 경우 완벽 도려내기
+            suggested_name = re.sub(r'^(출력\s*결과|원복\s*핵심어|원본\s*핵심어|결과|refined_title)\s*:\s*', '', suggested_name, flags=re.IGNORECASE)
+            suggested_name = suggested_name.replace('"', '').replace("'", "")
+            
             # 특수문자 사후 공백 처리 안전장치
             suggested_name = re.sub(r'[\[\]_,\!#+/\(\)A-Za-z]', ' ', suggested_name)
             
-            # 💡 [버그 수정] departure가 원본에 '실제로 존재할 때만' 파이썬 강제 결합 사후 가드 발동
+            # 출발지 결합 예외처리 보정
             if departure:
                 if not suggested_name.startswith(departure):
                     clean_opt = suggested_name.replace(departure.replace("[","").replace("]",""), "")
@@ -182,15 +181,16 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
                     suggested_name = f"{departure} {clean_opt}"
             
             suggested_name = re.sub(r'\s+', ' ', suggested_name).strip()
+            
+            # 💡 [최종 생존성 하드가드] 규격이 비정상적이거나 뇌절 라벨이 완벽히 안 지워졌으면 그냥 원본 보존 리턴
+            if len(suggested_name) < 25 or len(suggested_name) > 50 or "결과" in suggested_name:
+                return raw_original_name
+                
             return suggested_name
             
         except Exception:
-            fallback_name = cleaned_title
-            if departure: fallback_name = f"{departure} {fallback_name}"
-            if options: fallback_name = f"{fallback_name} {options}"
-            if not any(fallback_name.endswith(word) for word in ["패키지여행", "자유여행", "크루즈", "골프", "여행"]):
-                fallback_name = f"{fallback_name} 패키지여행"
-            return re.sub(r'\s+', ' ', fallback_name).strip()
+            # 에러 발생 시 원본 보호
+            return raw_original_name
 
 # ==========================================
 # [메인 실행 엔진]
