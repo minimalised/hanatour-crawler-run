@@ -1,4 +1,4 @@
-name: [중복제거] 상품명 기준 중복제거
+name: "[중복제거] 상품 정리"
 
 on:
   repository_dispatch:
