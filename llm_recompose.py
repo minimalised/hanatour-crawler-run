@@ -21,31 +21,49 @@ def calculate_hash(text: str) -> str:
     return hashlib.md5(text.encode('utf-8')).hexdigest()
 
 def clean_origin_name(text: str) -> str:
+    """
+    네이버 쇼핑 상위 TOP 80 데이터 기반 1차 노이즈 청소 필터
+    영문 알파벳을 사전 차단하여 환각 오류를 차단합니다.
+    """
     if not text:
         return ""
+    
+    # 1. URL 및 언더바 처리
     text = re.sub(r'https?://\S+', '', text)
     text = text.replace("_", " ")
+    
+    # 2. 실전 스팸성 날짜/타임세일/홈쇼핑 방영분 기계적 차단
     text = re.sub(r'[\[\(]\d*[가-힣]*세일[\]\)]', ' ', text)
     text = re.sub(r'[\[\(]\d*[가-힣]*특가[\]\)]', ' ', text)
     text = re.sub(r'[\[\(]\d*[가-힣]*출발[\]\)]', ' ', text)
+    text = re.sub(r'[\[\(]\d*[가-힣]*방영[\]\)]', ' ', text)
+    text = re.sub(r'[\[\(]\d*월\d*일[^\]\)]*[\]\)]', ' ', text) 
+    
+    # 3. [NO 유류세인상] 등 무의미한 문구 선제거
     text = re.sub(r'\[\s*NO\s*(유류세|유류부담|인상|부담)[^\]]*\]', ' ', text, flags=re.IGNORECASE)
+    
+    # 4. 필수 핵심 SEO 속성은 AI가 인지하기 편하게 표준 한글 단어로 치환
     text = re.sub(r'NO쇼핑', '노쇼핑', text, flags=re.IGNORECASE)
     text = re.sub(r'NO팁', '노팁', text, flags=re.IGNORECASE)
     text = re.sub(r'NO옵션', '노옵션', text, flags=re.IGNORECASE)
     
+    # 5. TOP 80 분석 기반 무조건 쳐내야 하는 쇼핑몰 유입용 광고 수식어 목록
     trash_words = [
-        "선착순특가", "실속여행", "신상품", "대박특가", "출발확정", "세미팩", 
-        "[SK스토아 에디션]", "[USJ 오피셜 호텔]", "[USJ와패키지를한번에]", "[VIP]",
+        "선착순특가", "실속여행", "신상품", "대박특가", "출발확정", "세미팩", "홈쇼핑방영작", "인기급상승",
+        "[SK스토아 에디션]", "[USJ 오피셜 호텔]", "[USJ와패키지를한번에]", "[VIP]", "단독특전", "선선한가을",
         "HIT!상품", "MD추천", "BEST상품", "추천상품", "효도락", "효율성甲", "얼리마켓", "스마트초이스", "유류세인상", "유류부담",
-        "세이브", "우리끼리", "브랜드미적용", "스탠다드", "프리미엄", 
-        "제우스 셀렉트", "제우스 시그니처", "현지투어플러스", "내나라여행", "제우스", "ZEUS", "하나투어"
+        "세이브", "우리끼리", "브랜드미적용", "스탠다드", "프리미엄", "하나팩", "하나투어", "추천",
+        "제우스 셀렉트", "제우스 시그니처", "현지투어플러스", "내나라여행", "제우스", "ZEUS"
     ]
     for word in trash_words:
         text = text.replace(word, "")
         
-    text = re.sub(r'\bNO\b', ' ', text, flags=re.IGNORECASE)
+    # 6. 알파벳 영문 및 대량 숫자 마스터 코드 전면 박멸 (항공코드 전면 삭제)
+    text = re.sub(r'[A-Za-z]', ' ', text)
     text = re.sub(r'\b\d{7,}\b', '', text)
-    text = re.sub(r'[^가-힣A-Za-z0-9\s\-\~\[\]\(\)\&]', '', text)
+    
+    # 7. 네이버 금지 기호 청소 (공백, 대시-, 물결~, 슬래시/ 만 허용)
+    text = re.sub(r'[^가-힣0-9\s\-\~\/]', '', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
@@ -71,7 +89,6 @@ def load_google_sheet_data():
     rows = all_values[1:]
     processed_rows = []
     
-    # 헤더 이름과 상관없이 오직 물리적 열(A=0, B=1, G=6)만 타겟팅
     id_idx = 0
     name_idx = 1
     result_idx = 6
@@ -111,18 +128,21 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
             origin_name = target["name"]
 
         retry_count = 0
+        
+        # ⚠️ 실시간 TOP 80 검색 상위 노출 상품들의 정렬 어순을 반영한 시스템 프롬프트
         system_content = (
-            "너는 네이버 쇼핑 검색 노출 로직(SEO) 최적화 카피라이터야.\n"
-            "목적: [원본 상품명]에서 홍보 수식어와 내부 코드를 빼고 25자~45자 사이의 완성형 상품명 생성.\n\n"
-            "⚠️ [필수 규칙]\n"
-            "- 글자 수 필수 준수: 공백 포함 최소 25자 ~ 최대 45자 (절대 엄수)\n"
-            "- 항공 코드 보존: 'CZ314', 'KE433' 등은 대괄호만 빼고 무조건 포함.\n"
-            "- 물결표 변경: '~' 기호는 무조건 대시('-')로 변경\n"
-            "- 제거 대상: '우리끼리', 'ZEUS', '스탠다드', '프리미엄', 'HIT', '추천' 및 영문 'NO'는 출력 금지.\n"
-            "- 필수 포함: '노쇼핑', '노팁' 정보는 문장 뒤쪽에 포함.\n"
-            "- 기호 금지: 오직 공백으로만 단어 구분.\n"
-            "정해진 상품명 딱 한 줄만 출력해라. 부연설명 금지."
+            "너는 네이버 쇼핑 패키지 여행 카테고리 최상위 노출을 전담하는 실전 SEO 카피라이터야.\n"
+            "제공된 [원본 상품명]을 네이버 검색 엔진 로직이 가장 좋아하는 직관적인 구조로 가공해라.\n\n"
+            "⚠️ [TOP 80 노출 알고리즘 핵심 규칙]\n"
+            "1. 🚫 알파벳 영문 절대 금지: 영문이나 항공코드(예: CZ314, KE 등)는 결과물에 단 한 글자도 절대 쓰지 마라. 발견 시 감점 처리됨.\n"
+            "2. 🧩 유기적인 명사구 완성: 단어를 콤마나 샵 기호로 무작정 묶지 말고, 소비자가 한눈에 읽을 수 있게 '서유럽 3국 프랑스 스위스 이탈리아 10일 패키지 여행'처럼 깔끔한 어절 단위로 연결해라.\n"
+            "3. 🗺️ 지역 및 일정 최우선 배치: 문장의 시작은 무조건 [국가/지역/도시명]과 [여행 일정(몇 박 몇 일)]이 와야 한다.\n"
+            "4. 🧳 핵심 상품 속성 보존: 원본에 있던 핵심 밸류 정보('국적기 직항', '5성급 호텔 숙박', '전일정 온천', '1일 자유시간')는 가독성을 높여 문장 중간에 반드시 포함해라.\n"
+            "5. 🛑 노쇼핑/노팁 후치 엄수: '노쇼핑', '노팁', '노옵션' 단어는 무조건 문장의 맨 뒤에 공백으로 구분하여 배치해라.\n"
+            "6. 📏 글자 수 제약: 결과물의 길이는 공백 포함 무조건 최소 25자에서 최대 45자 사이여야 한다.\n\n"
+            "정해진 최종 정제 상품명 '딱 한 줄'만 출력하고, 따옴표나 서론, 설명은 일절 배제해라."
         )
+        
         messages = [
             {"role": "system", "content": system_content},
             {"role": "user", "content": f"원본: {origin_name}"}
@@ -139,7 +159,8 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
                 )
                 suggested_name = response.choices[0].message.content.strip()
                 suggested_name = suggested_name.replace('~', '-')
-                suggested_name = re.sub(r'\bNO\b', ' ', suggested_name, flags=re.IGNORECASE)
+                # 영문 알파벳 2차 후처리 필터
+                suggested_name = re.sub(r'[A-Za-z]', '', suggested_name)
                 suggested_name = re.sub(r'[\[\]_,\!#+/\(\)]', ' ', suggested_name)
                 suggested_name = re.sub(r'\s+', ' ', suggested_name).strip()
                 
@@ -150,7 +171,7 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
                 retry_count += 1
                 messages = [
                     {"role": "system", "content": system_content},
-                    {"role": "user", "content": f"이전 결과({suggested_name})는 조건 위반입니다. 규칙과 글자 수(25자~45자)를 맞춰 다시 딱 한 줄만 내놓으세요. 원본: {origin_name}"}
+                    {"role": "user", "content": f"이전 결과({suggested_name})는 조건 위반입니다. 영문을 완전히 제외하고 상위 노출 구조와 글자 수(25자~45자)를 맞춰 다시 딱 한 줄만 내놓으세요. 원본: {origin_name}"}
                 ]
             except Exception as e:
                 print(f"❌ API 에러 발생 ({origin_name}): {e}")
@@ -158,11 +179,11 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
                 retry_count += 1
                 
         fallback_name = origin_name.replace('~', '-')
-        fallback_name = re.sub(r'[\[\]_,\!#+/\(\)]', ' ', fallback_name)
+        fallback_name = re.sub(r'[\[\]_,\!#+/\(\)A-Za-z]', ' ', fallback_name)
         delete_keywords = ['HIT!상품', 'MD추천', 'BEST상품', '추천상품', '효도락', '효율성甲', '얼리마켓', '스마트초이스', '유류세인상', '유류부담', '세이브', '우리끼리', '브랜드미적용', '스탠다드', '프리미엄', '제우스', 'ZEUS']
         for kw in delete_keywords:
             fallback_name = fallback_name.replace(kw, '')
-        fallback_name = re.sub(r'\bNO\b', ' ', fallback_name, flags=re.IGNORECASE).replace('NO쇼핑', '노쇼핑').replace('NO팁', '노팁').replace('NO옵션', '노옵션')
+        fallback_name = fallback_name.replace('NO쇼핑', '노쇼핑').replace('NO팁', '노팁').replace('NO옵션', '노옵션')
         fallback_name = re.sub(r'\s+', ' ', fallback_name).strip()
         
         if len(fallback_name) > 45: fallback_name = fallback_name[:41] + " 패키지여행"
