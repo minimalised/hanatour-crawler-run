@@ -9,6 +9,9 @@ import gspread
 from google.oauth2.service_account import Credentials
 from openai import AsyncOpenAI
 
+# ==========================================
+# [설정 및 환경 변수]
+# ==========================================
 SPREADSHEET_KEY = os.environ.get("SOURCE_SPREADSHEET_ID") 
 SOURCE_SHEET_NAME = "raw"                        
 CACHE_FILE_PATH = "product_cache.json"          
@@ -20,32 +23,69 @@ aclient = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
 def calculate_hash(text: str) -> str:
     return hashlib.md5(text.encode('utf-8')).hexdigest()
 
-def extract_duration_and_clean(title: str):
+# ==========================================
+# [데이터 전처리 함수]
+# ==========================================
+def extract_meta_and_clean(title: str):
     """
-    파이썬 단에서 원본 상품명 분석 후 일정(박/일)을 정형 데이터로 선제 추출
+    [2色매력]과 같이 한자가 섞인 쓰레기 수식어를 파이썬 단에서 먼저 도려내고,
+    알파벳 및 불필요 특수문자를 제거하여 깨끗한 뼈대 데이터를 구축하는 함수
     """
-    duration_match = re.search(r'\d+박\s*\d+일|\d+일|\d+박\d+일', title)
-    duration = duration_match.group(0).strip() if duration_match else "일정미상"
-    
-    # 원본에서 수천 가지 종류의 '날짜 세일/특가/방영' 대괄호 찌꺼기를 정규식으로 1차 청소
-    clean_title = re.sub(r'[\[\(][^\]\)]*(세일|특가|출발|방영|추천|확정|타임|에디션|특전)[\]\)]', ' ', title)
-    clean_title = re.sub(r'[\[\(]\d*월\d*일[^\]\)]*[\]\)]', ' ', clean_title)
-    clean_title = re.sub(r'[A-Za-z]', ' ', clean_title) # 알파벳 완전 제거로 환각 에러 원천 봉쇄
-    clean_title = re.sub(r'[^가-힣0-9\s\-]', ' ', clean_title)
-    clean_title = re.sub(r'\s+', ' ', clean_title).strip()
-    
-    return duration, clean_title
+    if not title:
+        return "", "", ""
+        
+    # 1. 출발공항 패턴 파이썬 단에서 선제 추출
+    airport_match = re.search(r'(청주|대구|부산|인천|무안|양양|제주)\s*출발', title)
+    departure = f"[{airport_match.group(0).strip()}]" if airport_match else ""
 
+    # 2. 일정(박/일) 추출 및 기호 정제 (ex: 4일, 3박5일)
+    duration_match = re.search(r'\d+박\s*\d+일|\d+일|\d+박\d+일|\d+~\d+일|\d+-\d+일', title)
+    duration = duration_match.group(0).strip() if duration_match else ""
+    duration = duration.replace('~', '-') 
+
+    # 3. 알파벳(항공코드), 한자(色 등), 불필요 특수문자 일괄 제거
+    clean_title = re.sub(r'[A-Za-z]', ' ', title)
+    clean_title = re.sub(r'[^가-힣0-9\s\-\/]', ' ', clean_title)
+
+    # 4. 상품명 오염 및 자질구레한 단어 1차 청소
+    kill_words = [
+        "2색상품", "2색매력", "매력", "두도시한번에", "두도시", "한번에", "시티", 
+        "골프장맵", "거리측정", "이용권", "추천", "쏙쏙", "오키짱쇼", "국제거리", 
+        "스테이크정식", "갓성비", "취향저격"
+    ]
+    for kw in kill_words:
+        clean_title = clean_title.replace(kw, " ")
+
+    # 5. 일정 뒤에 나오는 잡다한 텍스트 찌꺼기 1차 컷 (선택 사항)
+    if duration:
+        for pat in [duration, duration.replace('-', '~')]:
+            if pat in clean_title:
+                clean_title = clean_title.split(pat)[0].strip() + " " + duration
+                break
+
+    clean_title = re.sub(r'\s+', ' ', clean_title).strip()
+    return departure, duration, clean_title
+
+# ==========================================
+# [사후 검증 함수]
+# ==========================================
 def validate_naver_title(title: str) -> bool:
-    """네이버 쇼핑 상품명 규격 사후 검증 가드 (25자~45자 체크)"""
-    if not title or not (25 <= len(title) <= 45):
+    """최소한의 비정상 출력 검증 (글자 수가 아닌 금지어 및 깨짐 위주)"""
+    if not title:
         return False
-    # 주관적 금지어 최종 필터
-    forbidden = ["추천", "베스트", "대박", "특가", "명문", "지역"]
+        
+    # 문장 끝에 '까', '포', '제' 등 한 글자만 남고 끝나는 비정상 패턴 필터링
+    if re.search(r'\s[가-힣]$', title):
+        return False
+        
+    forbidden = ["추천", "베스트", "대박", "특가", "명문", "지역", "골프장맵", "이용권", "2색상품", "쏙쏙"]
     if any(word in title for word in forbidden):
         return False
     return True
 
+# ==========================================
+# [구글 시트 연동 로직]
+# ==========================================
 def load_google_sheet_data():
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     google_json_raw = os.environ.get("GOOGLE_JSON_RAW")
@@ -66,7 +106,6 @@ def load_google_sheet_data():
     rows = all_values[1:]
     processed_rows = []
     
-    # 물리적 열 매핑 고정 (A=ID, B=원본상품명, G=최종결과)
     for idx, row in enumerate(rows, start=2): 
         while len(row) < 7:
             row.append("")
@@ -94,55 +133,53 @@ def save_cache(cache_data: Dict[str, Dict]):
     with open(CACHE_FILE_PATH, "w", encoding="utf-8") as f:
         json.dump(cache_data, f, ensure_ascii=False, indent=4)
 
+# ==========================================
+# [LLM 호출 및 비동기 엔진 - 글자수 무제한 해제]
+# ==========================================
 async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
     async with semaphore:
-        # 파이썬 사전 전처리 및 정형 데이터 바인딩
-        duration, cleaned_title = extract_duration_and_clean(target["name"])
+        departure, duration, cleaned_title = extract_meta_and_clean(target["name"])
         
-        # 핵심 옵션 단어 필터링
         options = ""
         if "NO쇼핑" in target["name"] or "노쇼핑" in target["name"]: options += "노쇼핑 "
         if "NO팁" in target["name"] or "노팁" in target["name"]: options += "노팁 "
         if "NO옵션" in target["name"] or "노옵션" in target["name"]: options += "노옵션 "
         options = options.strip()
 
-        # 성공 레퍼런스를 벤치마킹한 구조화 퓨샷 프롬프트
+        # [🚨 리미트 완전 전면 철폐] 글자 제한을 없애고 오직 단어 완결성만 명령
         prompt = f"""
-당신은 네이버 쇼핑 검색 최적화(SEO) 및 소비자 클릭률(CTR)을 극대화하는 퍼포먼스 마케팅 카피라이팅 전문가입니다.
-제공된 여행 정형 데이터를 기반으로 가이드라인을 완벽히 준수하는 군더더기 없는 깔끔한 상품명 1개를 생성하세요.
+당신은 여행 상품명 정제 자동화 로봇입니다. 
+글자 수 제한(25자~45자) 규격에 맞추려고 단어를 억지로 자르거나 축약하지 마십시오. 
+문장 중간에 단어가 절대 잘리지 않도록 안전하고 완성도 높은 명사구 형태의 상품명을 생성하세요. 
 
 [입력 정형 데이터]
-- 원본 상품명: {cleaned_title}
-- 여행 일정: {duration}
-- 핵심 필수 옵션: {options}
+- 지정 출발지: "{departure}"
+- 여행 일정: "{duration}"
+- 주요 지역/도시명: "{cleaned_title}"
+- 필수 옵션 문구: "{options}"
 
-[🧱 1단계: 상품명 조합 어순 공식]
-최종 상품명은 반드시 아래의 어순 구조를 물리적으로 지켜야 하며, 단어 사이에 띄어쓰기를 명확히 하십시오.
-- 구조 공식: {{주요 지역/도시명}} + {{여행 일정}} + {{핵심 자산 고유명사 (호텔명/골프장명 등 최대 2개)}} + {{필수 옵션}}
+[📋 조립 규칙]
+1. 🚫 **단어 절대 절단 금지**: 문장 끝이나 중간이 '까', '포', '제' 같이 한 글자만 남고 잘리는 현상은 절대 금지합니다. 단어는 무조건 완성된 형태로만 출력되어야 합니다.
+2. 📏 **글자 수 제약 해제**: 길이가 더 짧아지거나 훨씬 더 길어져도 완벽히 무관하니, 텍스트가 잘리지 않고 온전하게 표현되는 것을 최우선으로 하십시오.
+3. 🗺️ **어순 공식**: {{지정 출발지}} + {{주요 지역/도시명}} + {{여행 일정}} + {{필수 옵션 문구}} + 패키지여행
+4. 🚫 **알파벳 출력 금지**: 영문 항공 코드나 알파벳은 완전히 배제하십시오.
 
-[📋 2단계: 완벽한 상품명 생성을 위한 퓨샷 예시 (Few-Shot)]
-아래의 예시를 보고 문장의 깔끔함, 혜택 찌꺼기가 제거된 상태를 그대로 학습하십시오.
-- 입력 원본 상품명: "경남 남해 골프 2일 36홀 남해명문골프장 아난티남해 골프장맵 거 패키지여행"
-- 출력 결과: "경남 남해 골프 2일 36홀 아난티남해 패키지여행"
-- 입력 원본 상품명: "[0504타임세일]오키나와 3일 갓성비추천 나하시내숙박 츄라우미수족관 오키짱쇼 국제거리"
-- 출력 결과: "오키나와 3일 나하시내 숙박 츄라우미수족관 패키지여행"
-
-[⚠️ 3단계: 핵심 제약 가이드라인]
-1. 글자 수 제약: 최종 생성 문장은 공백 포함 반드시 25자 이상 ~ 45자 이하로 채우십시오.
-2. 혜택 단어 박멸: '골프장맵', '거리측정기', '음료교환권', '스테이크정식', '지하철패스' 같은 조잡한 포함사항이나 사은품 명사는 무조건 제외하십시오.
-3. 주관적 홍보어 금지: '추천', '베스트', '명문', '최고', '대박', '2색상품' 같은 내부 분류명이나 홍보 수식어는 절대 추가하지 마십시오.
-4. 기호 사용 금지: 오직 한글, 숫자, 공백만 허용합니다. 영어 알파벳은 절대 출력 금지합니다.
+최종 완성된 정제 상품명 '딱 한 줄'만 JSON 포맷으로 출력하십시오.
 """
-        # 구조적 JSON 오염 방지를 위한 스키마 강제 지정 가드
+
+        # JSON 스키마에서 글자수 관련 메타 제약을 완전히 제거
         json_schema_format = {
             "type": "json_schema",
             "json_schema": {
-                "name": "naver_single_title_schema",
+                "name": "naver_seo_flexible_title_schema",
                 "strict": True,
                 "schema": {
                     "type": "object",
                     "properties": {
-                        "refined_title": {"type": "string"}
+                        "refined_title": {
+                            "type": "string",
+                            "description": "글자 수 제한 없이 단어가 온전하게 마감된 최종 정제 상품명"
+                        }
                     },
                     "required": ["refined_title"],
                     "additionalProperties": False
@@ -160,45 +197,49 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
                         {"role": "user", "content": prompt}
                     ],
                     response_format=json_schema_format,
-                    temperature=0.2 # 온도를 완전히 낮춰 기계적 정교함 극대화
+                    temperature=0.1
                 )
                 
                 res_json = json.loads(response.choices[0].message.content)
                 suggested_name = res_json.get("refined_title", "").strip()
                 
-                # 부호 사후 정제 가드
-                suggested_name = suggested_name.replace('~', '-')
+                # 기호 사후 보정 및 깔끔한 공백 정리
                 suggested_name = re.sub(r'[\[\]_,\!#+/\(\)A-Za-z]', ' ', suggested_name)
+                if departure and not suggested_name.startswith(departure):
+                    clean_opt = suggested_name.replace(departure.replace("[","").replace("]",""), "")
+                    clean_opt = re.sub(r'^[ \t\s\-]+', '', clean_opt).strip()
+                    suggested_name = f"{departure} {clean_opt}"
+                
                 suggested_name = re.sub(r'\s+', ' ', suggested_name).strip()
                 
-                # 사후 검증 검사기 가동
+                # 사후 검증 (끝자리 잘림 현상이 없는지 최종 체크)
                 if suggested_name not in confirmed_pool and validate_naver_title(suggested_name):
                     confirmed_pool.add(suggested_name)
                     return suggested_name
                 
                 retry_count += 1
-            except Exception as e:
-                await asyncio.sleep(0.5)
+            except Exception:
+                await asyncio.sleep(0.3)
                 retry_count += 1
                 
-        # 3회 실패 시 작동할 강제 사후 보정 가드 (수식어 공해 완전 차단)
+        # 3회 실패 시 Fallback 로직도 글자수 리미트 삭제
         fallback_name = cleaned_title
-        kill_pats = ['2색상품', '명문골프장', '지역골프장', '골프장맵', '거리측정', '이용권', '패키지여행', '추천']
-        for pat in kill_pats:
-            fallback_name = fallback_name.replace(pat, '')
-        fallback_name = re.sub(r'\s+', ' ', fallback_name).strip()
-        
-        if options: fallback_name = f"{fallback_name} {options}"
-        
-        # 물리적 길이 보정 패딩
-        if len(fallback_name) > 45: fallback_name = fallback_name[:41] + " 여행"
-        elif len(fallback_name) < 25: fallback_name = fallback_name + " 패키지여행 상품"
-        
-        confirmed_pool.add(fallback_name)
-        return fallback_name
+        if departure:
+            fallback_name = f"{departure} {fallback_name}"
+        if options:
+            fallback_name = f"{fallback_name} {options}"
+        if not fallback_name.endswith("패키지여행"):
+            fallback_name = f"{fallback_name} 패키지여행"
+            
+        final_fallback = re.sub(r'\s+', ' ', fallback_name).strip()
+        confirmed_pool.add(final_fallback)
+        return final_fallback
 
+# ==========================================
+# [메인 실행 엔진]
+# ==========================================
 async def main():
-    print(f"🛒 1. 구조화 매핑 기반 데이터 가드 엔진 시동...")
+    print(f"🛒 1. 유연한 글자수 자동화 구조화 엔진 가동...")
     sheet, current_products, headers = load_google_sheet_data()
     old_cache = load_cache()
     
@@ -216,12 +257,12 @@ async def main():
         p_id = p["id"]
         current_hash = calculate_hash(p["name"])
         
+        # 비정상적인 종결('까' 등)이나 찌꺼기가 들어간 경우 무조건 타겟팅에 포함하여 재추출
         has_corrupted_result = (
             not p["current_result"] or
             "_" in p["current_result"] or 
-            p["current_result"].endswith(("포함", "제공", "특전")) or 
-            not (25 <= len(p["current_result"]) <= 45) or
-            " " not in p["current_result"][-8:]
+            re.search(r'\s[가-힣]$', p["current_result"]) or
+            p["current_result"].endswith(("자유쇼핑", "골프장맵", "두도시"))
         )
         
         if has_corrupted_result:
@@ -234,7 +275,7 @@ async def main():
             if is_new or is_changed or is_row_shifted:
                 targets_to_process.append(p)
 
-    # 🧪 [안전 검증] 오차 범위를 완전히 줄이기 위해 상위 100개 선별 테스트 가동
+    # 🧪 안전을 위해 상위 100개 슬라이싱 (실배포시 아래 라인을 주석처리하거나 삭제하세요)
     targets_to_process = targets_to_process[:100]
     
     confirmed_pool = set()
@@ -243,12 +284,12 @@ async def main():
         if p_id in new_cache and p_id not in {t["id"] for t in targets_to_process}:
             confirmed_pool.add(new_cache[p_id]["recomposed_name"])
             
-    print(f"📊 자가진단 반영 테스트: 총 {len(targets_to_process)}개의 상품을 정제 타겟팅합니다.")
+    print(f"📊 처리 타겟팅: 총 {len(targets_to_process)}개의 상품을 정제합니다.")
     if not targets_to_process:
-        print("✅ 새로 반영할 테스트 항목이 없습니다.")
+        print("✅ 새로 반영할 항목이 없습니다.")
         return
 
-    print(f"🚀 구조화 JSON 스키마 API 병렬 요청 중...")
+    print(f"🚀 구조화 비동기 병렬 요청 호출...")
     tasks = [call_llm_with_retry(target, confirmed_pool) for target in targets_to_process]
     llm_results = await asyncio.gather(*tasks)
     
@@ -261,7 +302,7 @@ async def main():
             "recomposed_name": final_name
         }
 
-    print("💾 시트 G열 업데이트 행 매핑 중...")
+    print("💾 시트 G열 순번 매핑 및 배치 적재 중...")
     max_row_num = max(p["row_num"] for p in current_products)
     g_col_output = []
     
@@ -284,10 +325,10 @@ async def main():
         start_row = i + 2  
         range_string = f"G{start_row}:G{start_row + len(chunk) - 1}"
         sheet.update(range_string, chunk)
-        print(f"   └ [하드웨어 가드 업데이트 완료] {range_string}")
+        print(f"   └ [시트 반영 완수] {range_string}")
 
     save_cache(new_cache)
-    print("📝 완벽 보정 테스트 캐시 백업 성공.")
+    print("📝 캐시 백업 성공. 프로세스 완료.")
 
 if __name__ == "__main__":
     asyncio.run(main())
