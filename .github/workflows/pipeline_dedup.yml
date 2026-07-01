@@ -3,7 +3,7 @@ name: Product List Pipeline (De-duplication & Remake)
 on:
   repository_dispatch:
     types: [run_product_pipeline]
-  workflow_dispatch: # GitHub에서 버튼 눌러서 수동 실행 가능
+  workflow_dispatch: 
 
 jobs:
   build_and_run:
@@ -17,7 +17,7 @@ jobs:
     - name: Python 환경 설정
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10' # 🧹 캐시 옵션을 지워서 에러를 해결했습니다.
+        python-version: '3.10' 
 
     - name: 필수 라이브러리 설치
       run: |
@@ -31,4 +31,4 @@ jobs:
         TARGET_SPREADSHEET_ID: ${{ secrets.TARGET_SPREADSHEET_ID }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       run: |
-        python pipeline.py
+        python pipeline_dedup.py
