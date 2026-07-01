@@ -20,12 +20,12 @@ semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
 aclient = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
 
 # ==========================================
-# [데이터 전처리 함수 - 5, 6, 7번 완전 박멸 및 1,2,3,4번 보존]
+# [데이터 전처리 함수 - 출발지 버그 완벽 수정 버전]
 # ==========================================
 def extract_meta_and_clean(title: str):
     """
-    마케터님과 확정한 룰에 따라 상품 고유 자산(호텔, 항공, CC)은 철저히 보존하고,
-    5, 6, 7번(타겟, 사은품, 광고 스팸어) 및 URL, 기계적 코드는 완벽히 도려내는 전처리 엔진
+    원본에 지정 도시 이름([대구출발], 청주출발 등)이 명학하게 박혀있는 경우에만 출발지를 추출합니다.
+    원본에 출발 도시가 없으면 departure를 무조건 빈 값("")으로 밀어내어 유령 출발지 생성을 차단합니다.
     """
     if not title:
         return "", "", ""
@@ -33,9 +33,13 @@ def extract_meta_and_clean(title: str):
     # URL 및 뭉개진 링크 문자열 완전 제거
     title_clean = re.sub(r'https?://\S+', ' ', title)
     
-    # 1. [3번 자산] 출발공항 패턴 한글명으로 선제 추출 ([대구출발] 등)
-    airport_match = re.search(r'(청주|대구|부산|인천|무안|양양|제주)\s*출발', title_clean)
-    departure = f"[{airport_match.group(0).strip()}]" if airport_match else ""
+    # 💡 [버그 완벽 수정] 공백 치환 전, "순수 원본 문자열(title)"에서 출발공항 패턴을 칼같이 추출
+    airport_match = re.search(r'\[?(청주|대구|부산|인천|무안|양양|제주)\]?\s*출발', title)
+    if airport_match:
+        city = airport_match.group(1).strip()
+        departure = f"[{city}출발]"
+    else:
+        departure = "" # 원본에 없으면 절대 지어내지 않고 빈 값 고정
 
     # 2. 일정(박/일) 정밀 추출 (ex: 4일, 3박5일)
     duration_match = re.search(r'\d+박\s*\d+일|\d+일|\d+박\d+일|\d+~\d+일|\d+-\d+일', title_clean)
@@ -106,7 +110,6 @@ def load_google_sheet_data_fixed_100():
 # 🛑 무한 과금 원천 차단형 비동기 LLM 엔지니어링 (1대1 단발 호출)
 # ==========================================
 async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
-    """while 루프 및 중복체크 JSON 스키마를 완전히 빼서 돈 날릴 확률을 0%로 통제합니다."""
     async with semaphore:
         departure, duration, cleaned_title = extract_meta_and_clean(target["name"])
         
@@ -116,9 +119,9 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
         if "NO옵션" in target["name"] or "노옵션" in target["name"]: options += "노옵션 "
         options = options.strip()
 
-        # 💡 피드백을 반영한 정교한 네이버 SEO 및 차별화 보존 프롬프트
+        # 💡 GPT가 퓨샷 예시를 보고 '대구출발'을 오인 복사하지 않도록 예시 변수화 처리
         prompt = f"""
-너는 네이버 쇼핑 입점 및 검색 최적화(SEO) 지침을 완벽하게 숙지한 글로벌 커머스 상품명 정제 전문가야.
+당신은 네이버 쇼핑 입점 및 검색 최적화(SEO) 지침을 완벽하게 숙지한 글로벌 커머스 상품명 정제 전문가야.
 지저분하고 노이즈가 많은 원본 여행 상품명을 분석하여, 네이버 쇼핑 검색 엔진에 즉시 노출 가능한 형태의 깨끗하고 매력적인 상품명으로 재구성해라.
 
 반드시 아래 [⚠️ 4대 핵심 제약 가이드라인]을 한 치의 오차도 없이 완벽하게 준수해야 한다.
@@ -143,19 +146,20 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
 
 4. 정보 보완 및 명사구 조합 구조 공식
    - 뼈대 구조: {{지정 출발지}} + {{주요 여행 지역/도시명}} + {{여행 일정}} + {{★해당 상품 고유의 자산(호텔명/항공사/핵심특전 명사)★}} + {{필수 옵션 문구}} + 패키지여행 (또는 자유여행/골프 상품 성격에 맞는 종결어)
-   - 만약 글자 수(최소 32자)를 채우지 못할 경우, 해당 여행지의 대표 핵심 명소, 항공사, 호텔 정보 등 실용적인 검색 키워드를 조합하여 채워라.
+   - 맨 앞에는 입력된 [지정 출발지] 데이터만 넣어야 하며, 없는 경우 절대로 지어내어 넣지 말고 생략해라.
    - 주의사항, '추천 결과:' 같은 불필요한 시스템 지시어를 앞뒤에 삽입하는 것을 절대 금지한다.
 
-5. 출력 형식
-   - 부연 설명, 서론, 후론은 일체 사절한다. 오직 네이버 규격에 맞춰 재구성된 상품명 '딱 한 줄'만 출력해라.
-
 💡 [작업 참고 예시]
-- 원본: [출발확정] [대구출발] 다낭 5일 미케비치5성 씨푸드특식바나힐호이안투어시티투어
-- 결과: 대구출발 다낭 5일 미케비치 5성 호텔 씨푸드 바나힐 호이안 시티 투어 패키지
+- 지정 출발지: "[청주출발]"
+- 원본 핵심어: "옌타이 연태 3일 월드체인 쉐라톤 전객실 오션뷰"
+- 출력 결과: [청주출발] 옌타이 연태 3일 쉐라톤 전객실 오션뷰 패키지여행
+
+- 지정 출발지: ""
+- 원본 핵심어: "오키나와 4일 대한항공 전일정나하숙박 1일자유"
+- 출력 결과: 오키나와 4일 대한항공 전일정 나하숙박 1일자유 패키지여행
 """
 
         try:
-            # 💡 딱 1번만 찌르고 끝내도록 변경 (과금 방지)
             response = await aclient.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
@@ -169,12 +173,18 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
             
             # 특수문자 사후 공백 처리 안전장치
             suggested_name = re.sub(r'[\[\]_,\!#+/\(\)A-Za-z]', ' ', suggested_name)
-            suggested_name = re.sub(r'\s+', ' ', suggested_name).strip()
             
+            # 💡 [버그 수정] departure가 원본에 '실제로 존재할 때만' 파이썬 강제 결합 사후 가드 발동
+            if departure:
+                if not suggested_name.startswith(departure):
+                    clean_opt = suggested_name.replace(departure.replace("[","").replace("]",""), "")
+                    clean_opt = re.sub(r'^[ \t\s\-]+', '', clean_opt).strip()
+                    suggested_name = f"{departure} {clean_opt}"
+            
+            suggested_name = re.sub(r'\s+', ' ', suggested_name).strip()
             return suggested_name
             
         except Exception:
-            # 에러 시 대비할 안전 Fallback 구조
             fallback_name = cleaned_title
             if departure: fallback_name = f"{departure} {fallback_name}"
             if options: fallback_name = f"{fallback_name} {options}"
@@ -194,7 +204,7 @@ async def main():
         return
 
     targets_to_process = current_products
-    confirmed_pool = set() # 구조 호환용 빈 세트 유지
+    confirmed_pool = set()
     
     print(f"📊 물리 테스트 타겟팅: 정확히 시트 상위 {len(targets_to_process)}개 행을 정밀 정제합니다.")
 
