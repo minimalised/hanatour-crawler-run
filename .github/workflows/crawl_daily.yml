@@ -1,4 +1,4 @@
-name: Daily Hanatour Crawling
+name: [크롤링] 하나투어 지역 퀵서치 상품 리스트 수집
 
 on:
   workflow_dispatch:      
