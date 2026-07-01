@@ -40,4 +40,10 @@ jobs:
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action Bot"
         git add product_cache.json
-        git diff --quiet && git diff --staged --quiet || (git commit -m "🤖 갱신: 상품 캐시 데이터 업데이트 (Incremental)" && git push)
+        if ! git diff --quiet || ! git diff --staged --quiet; then
+          git commit -m "🤖 갱신: 상품 캐시 데이터 업데이트 (Incremental)"
+          git pull --rebase origin main
+          git push origin main
+        else
+          echo "변경 사항이 없어 푸시를 건너뜁니다."
+        fi
