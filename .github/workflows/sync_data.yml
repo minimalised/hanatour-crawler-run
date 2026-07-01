@@ -1,4 +1,4 @@
-name: Daily Hanatour Data Sync
+name: [동기화] 판매상품코드 파일 동기화
 
 on:
   schedule:
