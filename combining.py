@@ -21,21 +21,29 @@ def calculate_hash(text: str) -> str:
     return hashlib.md5(text.encode('utf-8')).hexdigest()
 
 def clean_origin_name(text: str) -> str:
+    """
+    1차 전처리: 완벽한 스팸성 수식어 및 네이버 금지 기호(#) 제거
+    단, 항공 코드는 보존하기 위해 알파벳 전면 제거 정규식은 적용하지 않음
+    """
     if not text:
         return ""
     
     text = re.sub(r'https?://\S+', '', text)
-    text = re.sub(r'_[A-Za-z0-9]+', '', text)
-    text = re.sub(r'\b[A-Z]{3,}\d{3,}[A-Za-z0-9]*\b', '', text)
-    text = re.sub(r'\b[A-Za-z0-9]{10,20}\b', '', text)
     text = text.replace("_", " ")
     
-    trash_words = ["선착순특가", "실속여행", "신상품", "대박특가", "출발확정", "세미팩", "[SK스토아 에디션]", "[USJ 오피셜 호텔]", "[USJ와패키지를한번에]", "[VIP]"]
+    # [사용자 피드백 반영] 전면 삭제할 광고성 문구 및 내부 상품 분류명 목록
+    trash_words = [
+        "선착순특가", "실속여행", "신상품", "대박특가", "출발확정", "세미팩", 
+        "[SK스토아 에디션]", "[USJ 오피셜 호텔]", "[USJ와패키지를한번에]", "[VIP]",
+        "HIT!상품", "MD추천", "BEST상품", "추천상품", "효도락", "효율성甲", "얼리마켓", "스마트초이스", "유류세인상", "유류부담",
+        "세이브", "우리끼리", "브랜드미적용", "스탠다드", "프리미엄", "제우스 셀렉트", "제우스 시그니처", "현지투어플러스", "내나라여행", "제우스", "ZEUS"
+    ]
     for word in trash_words:
         text = text.replace(word, "")
         
     text = re.sub(r'\b\d{7,}\b', '', text)
-    text = re.sub(r'[^가-힣0-9\s\-\[\]\(\)\&]', '', text)
+    # 물결표(~), 대시(-), 괄호[], () 및 한글/영어/숫자/공백만 허용하고 샵(#), 쉼표(,) 등은 전면 제거
+    text = re.sub(r'[^가-힣A-Za-z0-9\s\-\~\[\]\(\)\&]', '', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
@@ -97,70 +105,112 @@ def save_cache(cache_data: Dict[str, Dict]):
 async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
     async with semaphore:
         origin_name = clean_origin_name(target["name"])
-        
         if not origin_name:
             origin_name = target["name"]
 
         retry_count = 0
-        extra_prompt = ""
+        
+        # [구조화된 시스템 프롬프트 반영]
+        system_content = (
+            "너는 네이버 쇼핑 검색 노출 로직(SEO) 최적화 및 커머스 마케팅 피드 전문 카피라이터야.\n"
+            "너의 유일한 목적은 제공된 [원본 상품명]에서 불필요한 홍보성 수식어와 내부 상품 분류 코드를 제거하고, 핵심 정보(항공 코드, 노쇼핑 여부 등)를 살려 네이버 쇼핑 노출 스코어가 가장 높은 25자 이상 45자 이하의 매력적인 완성형 상품명으로 재조합하는 것이다.\n\n"
+            
+            "⚠️ [네이버 쇼핑 SEO 핵심 가이드라인]\n"
+            "1. 🎯 엄격한 글자 수 제한 (공백 포함 25자 ~ 45자):\n"
+            "   - 최종 추천 결과물의 길이는 반드시 최소 25자에서 최대 45자 사이여야 한다. (★45자 절대 초과 금지, 25자 미만 절대 금지★)\n"
+            "   - 대략 5개~8개의 단어(어절) 조합으로 구성하면 이 길이에 부합한다.\n"
+            "2. 🧠 정보 중심의 유기적 재조합 (키워드 단순 나열 금지):\n"
+            "   - 단어를 무작정 이어 붙이지 말고, 소비자가 읽기 쉽고 로직이 선호하는 부드러운 문장 구조로 재조합해라.\n"
+            "3. 🛑 항목별 필터링 규칙 (필수 준수):\n"
+            "   - [항공편 코드 유지]: 'CZ314', 'KE433' 같은 항공 코드 및 숫자는 상품 식별에 필수적이므로, 대괄호만 제거하고 상품명 앞이나 중간에 텍스트 형태로 '반드시 보존'하라.\n"
+            "   - [NO쇼핑 / NO팁 필수 반영]: 이는 소비자의 상품 선택에 중요한 정보이므로 제거하지 말고, 문장 속에 자연스럽게 포함시켜라. (예: '~ 노쇼핑 노팁 패키지')\n"
+            "   - [출발지 정보 보존]: '[부산출발]', '[청주출발]' 등은 필수 정보이므로 괄호를 제거하고 텍스트로 살려라.\n"
+            "   - [광고성 수식어 및 내부 상품 분류 전면 삭제]:\n"
+            "     * 'HIT!', 'MD추천', 'BEST상품', '추천상품', '효도락', '효율성甲', '얼리마켓', '스마트초이스' 등 홍보성 문구 삭제.\n"
+            "     * '세이브', '우리끼리', '브랜드미적용', '스탠다드', '프리미엄', '제우스 셀렉트', '제우스 시그니처', '현지투어플러스', '내나라여행', '제우스', 'ZEUS' 등 기업 내부 상품 등급 및 분류명은 무조건 전면 삭제.\n"
+            "     * 단, '골프', '레포츠', '트레킹', '허니문', '크루즈'는 상품의 핵심 테마이므로 문맥상 필요한 경우 텍스트로 보존하라.\n\n"
+            
+            "⚠️ [올바른 변환 예시 (Few-Shot)]\n"
+            "- 입력: [CZ314/313]상해/소주/주가각 4일 NO쇼핑 상해3박 스타벅스리저브\n"
+            "- 출력: CZ314 상해 소주 주가각 4일 노쇼핑 패키지 여행\n"
+            "- 입력: [ZEUS] 제주 3일 JW메리어트 럭셔리호캉스\n"
+            "- 출력: 제주 3일 JW메리어트 럭셔리 호캉스 패키지 여행\n"
+            "- 입력: [우리끼리] 장가계 4일 칠성산 투어 패키지\n"
+            "- 출력: 장가계 4일 칠성산 유리다리 삼림공원 패키지 여행\n"
+            "- 입력: [NO쇼핑] 타이베이 예류 스펀 지우펀 3박~5일 시내호텔숙박\n"
+            "- 출력: 타이베이 예류 스펀 지우펀 3박-5일 노쇼핑 시내호텔 패키지\n\n"
+            
+            "⚠️ [출력 제한 사양]\n"
+            "- 원본 상품명에 물결표(~)가 있을 경우, 삭제하지 말고 반드시 대시(-)로 변경하여 출력할 것. (예: 3박~5일 ➡️ 3박-5일)\n"
+            "- 쉼표(,), 느낌표(!), 샵(#), 플러스(+), 언더바(_), 슬래시(/), 대괄호([]) 등의 기호는 최종본에 절대 사용 금지. 단어 구분은 오직 공백으로만 하라.\n"
+            "- 부가적인 설명 없이 오직 가공 완료된 상품명 '딱 한 줄'만 출력할 것."
+        )
+
+        messages = [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": f"원본 상품명: {origin_name}"}
+        ]
         
         while retry_count < 3:
             try:
+                # 실패 횟수가 누적될수록 엄격도를 높이기 위해 온도를 낮춤
+                current_temp = 0.3 if retry_count == 0 else 0.1
+                
                 response = await aclient.chat.completions.create(
                     model="gpt-4o-mini",
-                    messages=[
-                        {
-                            "role": "system", 
-                            "content": (
-                                "너는 네이버 쇼핑 검색 노출 로직(SEO) 최적화 및 커머스 마케팅 피드 전문 카피라이터야. "
-                                "너의 유일한 목적은 원본 상품명에서 불필요한 노이즈를 제거하고, 네이버 쇼핑 노출 스코어가 가장 높은 25자 이상 45자 이하의 매매력적인 완성형 상품명으로 재조합하는 것이다.\n\n"
-                                "⚠️ [네이버 쇼핑 SEO 핵심 가이드라인]\n"
-                                "1. 🎯 엄격한 글자 수 제한 (25자 ~ 45자):\n"
-                                "   - 최종 추천 결과물의 길이는 공백을 포함하여 반드시 최소 25자에서 최대 45자 사이여야 한다. (★45자 절대 초과 금지, 25자 미만 절대 금지★)\n"
-                                "2. 🧠 정보 중심의 유기적 재조합 (키워드 단순 나열 금지):\n"
-                                "   - '미샌딩포함 스낵 제공'처럼 키워드 조각을 무작정 이어 붙인 나열형 상품명은 네이버 로직에서 어뷰징으로 차단당한다.\n"
-                                "   - 반드시 문맥을 파악하여 '메리어트호텔 6일 클락 명문 골프 패키지', '홋카이도 후라노 비에이 온천호텔 4일 패키지여행'처럼 소비자가 읽기 쉽고 로직이 선호하는 부드러운 문장 구조로 재조합해라.\n"
-                                "3. 🛑 상품 ID, 코드 및 영문 노이즈 전면 제거:\n"
-                                "   - 상품 고유 ID, 영어 알파벳과 숫자가 뒤섞인 마스터 코드 등 시스템 노이즈는 네이버 쇼핑 검색 품질 가이드라인 위반이므로 단 한 글자도 진입시키지 마라. 100% 순수 한글, 일정 숫자, 공백으로만 채워라.\n"
-                                "4. 💎 핵심 가치 정보(숫자) 보존:\n"
-                                "   - '9일', '10일', '4일', '4성급', '18홀 3회' 등 여행 상품의 일자, 기간, 등급을 나타내는 숫자는 네이버 검색 필수 키워드이므로 절대로 누락하지 말고 카피 속에 자연스럽게 녹여내라.\n"
-                                "5. 광고성 공해 단어 전면 배제:\n"
-                                "   - '선착순특가', '실속여행', '신상품', '대박특가', '출발확정', '세미팩' 등 네이버 로직이 스팸으로 분류하는 진부한 홍보 단어는 무조건 삭제해라.\n\n"
-                                "⚠️ [출력 제한 사양]\n"
-                                "- 문장 끝은 끊기지 않고 신뢰감을 주는 명사구 형태(예: ~ 여행, ~ 패키지, ~ 투어)로 자연스럽게 끝맺음할 것.\n"
-                                "- 쉼표(,), 느낌표(!), 물결(~), 플러스(+), 언더바(_) 등의 부호는 절대 사용 금지.\n"
-                                "- 부가적인 설명, 서론, 후론은 일체 배제하고 오직 가공 완료된 상품명 '딱 한 줄'만 출력할 것.\n\n"
-                                f"{extra_prompt}"
-                            )
-                        },
-                        {"role": "user", "content": f"원본 상품명: {origin_name}"}
-                    ],
+                    messages=messages,
                     max_tokens=80,
-                    temperature=0.3
+                    temperature=current_temp
                 )
                 
                 suggested_name = response.choices[0].message.content.strip()
                 
-                suggested_name = re.sub(r'[A-Za-z_]', '', suggested_name).strip()
-                suggested_name = re.sub(r'\s+', ' ', suggested_name)
+                # [후처리 필터 고도화 및 부호 규칙 반영]
+                suggested_name = suggested_name.replace('~', '-')  # 물결표 치환
+                suggested_name = re.sub(r'[\[\]_,\!#+/\(\)]', ' ', suggested_name)  # 샵(#)을 포함한 금지 특수문자 제거
+                suggested_name = re.sub(r'\s+', ' ', suggested_name).strip()
                 
+                # 중복 및 글자수 조건 체크
                 if suggested_name not in confirmed_pool and 25 <= len(suggested_name) <= 45:
                     confirmed_pool.add(suggested_name)
                     return suggested_name
                 
+                # 조건 실패 시 이전 대화 내역에 피드백을 누적하는 대화형 구조로 전환
                 retry_count += 1
-                extra_prompt = f"\n⚠️ 글자 수가 25자~45자 범위를 벗어났거나 단순 단어 나열 형태입니다. 네이버 쇼핑 노출 규격(25~45자)에 맞게 완성형 문장으로 다시 작성하세요."
+                messages.append({"role": "assistant", "content": suggested_name})
+                messages.append({
+                    "role": "user", 
+                    "content": f"⚠️ 실패 피드백: 방금 준 결과물은 {len(suggested_name)}자이거나 규칙(물결표를 대시로 변경, 샵(#) 및 내부 분류명 완벽 제거 등)을 위반했습니다. 네이버 쇼핑 SEO 규격(공백 포함 25~45자)을 엄격히 준수하여 최종 상품명 딱 한 줄만 다시 출력하세요."
+                })
                 
             except Exception as e:
                 print(f"❌ API 에러 발생 ({origin_name}): {e}")
                 await asyncio.sleep(1)
                 retry_count += 1
                 
-        fallback_name = re.sub(r'[A-Za-z_]', '', origin_name).strip()
+        # ==========================================
+        # 3회 실패 시 최종 안전장치 (Fallback 로직 고도화)
+        # ==========================================
+        fallback_name = origin_name.replace('~', '-')
+        fallback_name = re.sub(r'[\[\]_,\!#+/\(\)]', ' ', fallback_name)
+        
+        # 수식어 및 내부 분류명 강제 제거
+        delete_keywords = [
+            'HIT!상품', 'MD추천', 'BEST상품', '추천상품', '효도락', '효율성甲', '얼리마켓', '스마트초이스', '유류세인상', '유류부담',
+            '세이브', '우리끼리', '브랜드미적용', '스탠다드', '프리미엄', '제우스 셀렉트', '제우스 시그니처', '현지투어플러스', '내나라여행', '제우스', 'ZEUS'
+        ]
+        for kw in delete_keywords:
+            fallback_name = fallback_name.replace(kw, '')
+            
+        # NO시리즈 한글화 변환 및 공백 정리
+        fallback_name = fallback_name.replace('NO쇼핑', '노쇼핑').replace('NO팁', '노팁').replace('NO옵션', '노옵션')
+        fallback_name = re.sub(r'\s+', ' ', fallback_name).strip()
+        
         if len(fallback_name) > 45:
-            fallback_name = fallback_name[:42] + " 여행"
+            fallback_name = fallback_name[:41] + " 패키지여행"
         elif len(fallback_name) < 25:
             fallback_name = fallback_name + " 추천 패키지 여행"
+            
         confirmed_pool.add(fallback_name)
         return fallback_name
 
@@ -183,10 +233,11 @@ async def main():
         p_id = p["id"]
         current_hash = calculate_hash(p["name"])
         
+        # [데이터 초기 청소 대응을 위한 검사 조건 완화]
+        # 캐시와 시트를 싹 지운 상태라면 모든 유효한 데이터가 타겟에 잡히도록 유도
         has_corrupted_result = (
             not p["current_result"] or
             "_" in p["current_result"] or 
-            re.search(r'[A-Za-z]', p["current_result"]) or 
             p["current_result"].endswith(("포함", "제공", "특전")) or 
             not (25 <= len(p["current_result"]) <= 45) or
             " " not in p["current_result"][-8:]
