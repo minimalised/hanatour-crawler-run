@@ -2,35 +2,29 @@ name: Daily Hanatour Data Sync
 
 on:
   schedule:
-    # 매일 한국 시간(KST) 아침 8시 30분에 자동으로 실행 (UTC 기준 23시 30분)
     - cron: '30 23 * * *'
   workflow_dispatch:
-    # GitHub 웹사이트에서 내가 원할 때 [Run workflow] 버튼을 눌러 수동 실행 가능
 
 jobs:
   run-automation:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. GitHub 저장소에 올린 파이썬 코드를 가상 서버로 가져옵니다.
     - name: Check out repository code
       uses: actions/checkout@v4
 
-    # 2. 가상 서버에 파이썬 환경을 세팅합니다. (문제가 된 cache 한 줄을 제거했습니다)
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
-    # 3. 50만 행 대용량 데이터 로드 및 구글 API 연동에 필수적인 라이브러리들을 설치합니다.
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install pandas openpyxl google-api-python-client google-auth gspread
 
-    # 4. 세팅해 둔 Secrets 보안 키들을 파이썬 환경 변수로 안전하게 넘겨주며 실행합니다.
     - name: Execute Python automation script
       env:
         GOOGLE_JSON_RAW: ${{ secrets.GOOGLE_JSON_RAW }}
         TARGET_SPREADSHEET_ID: ${{ secrets.TARGET_SPREADSHEET_ID }}
-      run: python update_data.py
+      run: python sync_data.py
