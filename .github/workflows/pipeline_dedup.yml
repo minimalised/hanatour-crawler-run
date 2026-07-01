@@ -1,4 +1,4 @@
-name: "C-2. [중복제거] 상품 정리"
+name: "C-2. [중복제거] 상품 정리 및 LLM 재조합"
 
 on:
   repository_dispatch:
@@ -22,7 +22,7 @@ jobs:
     - name: 필수 라이브러리 설치
       run: |
         python -m pip install --upgrade pip
-        pip install pandas gspread google-auth openpyxl
+        pip install pandas gspread google-auth openpyxl openai
 
     - name: 데이터 처리 및 상품명 재조합 실행
       env:
@@ -32,3 +32,21 @@ jobs:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       run: |
         python pipeline_dedup.py
+
+    - name: 캐시 파일(product_cache.json) 업데이트 및 커밋
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        
+        if [ -f "product_cache.json" ]; then
+          git add product_cache.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: 🤖 파이프라인 LLM 상품 캐시 업데이트"
+            git push
+            echo "✅ 캐시 파일이 레포지토리에 성공적으로 업데이트되었습니다."
+          else
+            echo "ℹ️ 캐시 파일에 변경 사항이 없습니다."
+          fi
+        else
+          echo "⚠️ 캐시 파일이 존재하지 않습니다."
+        fi
