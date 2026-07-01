@@ -15,6 +15,7 @@ from openai import AsyncOpenAI
 SPREADSHEET_KEY = os.environ.get("SOURCE_SPREADSHEET_ID") 
 SOURCE_SHEET_NAME = "raw"                        
 
+# 동시 처리 태스크 수 (Rate Limit 방어)
 MAX_CONCURRENT_TASKS = 10 
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
 aclient = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
@@ -73,9 +74,9 @@ def extract_meta_and_clean(title: str):
     return departure, duration, title_clean
 
 # ==========================================
-# [구글 시트 연동 로직 - 상위 100개 고정형]
+# [구글 시트 연동 로직 - 가변형 전체 로드]
 # ==========================================
-def load_google_sheet_data_fixed_100():
+def load_google_sheet_all_data():
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     google_json_raw = os.environ.get("GOOGLE_JSON_RAW")
     if google_json_raw:
@@ -88,10 +89,16 @@ def load_google_sheet_data_fixed_100():
     doc = client.open_by_key(SPREADSHEET_KEY)
     sheet = doc.worksheet(SOURCE_SHEET_NAME)
     
-    cell_range = sheet.get("A2:G101")
+    # 데이터가 있는 전체 영역 로드
+    all_values = sheet.get_all_values()
+    if len(all_values) <= 1:
+        return sheet, []
+        
+    header = all_values[0]
+    cell_range = all_values[1:] # 헤더 제외한 실제 데이터
     
     processed_rows = []
-    for idx, row in enumerate(cell_range, start=2):
+    for idx, row in enumerate(cell_range, start=2): # 시트 행 번호는 2부터 시작
         while len(row) < 7:
             row.append("")
         p_id = str(row[0]).strip()   
@@ -112,7 +119,7 @@ def load_google_sheet_data_fixed_100():
 # ==========================================
 async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
     async with semaphore:
-        # 💡 실패 대비 백업 데이터 확보
+        # 💡 실패 대비 원본 상품명 하드 복사 백업
         raw_original_name = target["name"]
         departure, duration, cleaned_title = extract_meta_and_clean(raw_original_name)
         
@@ -125,7 +132,7 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
         # 💡 라벨링 뇌절 전면 금지 지시 및 자산 보존 하드캐리 프롬프트
         prompt = f"""
 당신은 네이버 쇼핑 입점 및 검색 최적화(SEO) 지침을 완벽하게 숙지한 글로벌 커머스 상품명 정제 전문가입니다.
-원본 핵심어의 불필요한 미사여구를 제거하되, 해당 상품 고유의 가치 자산인 명사(골프장명, 리조트/호텔명, 항공사)는 무조건 최종 상품명에 누출시켜 네이밍을 완성하십시오.
+원본 핵심어의 불필요한 미사여구를 제거하되, 해당 상품 고유의 가치 자산인 명사(골프장명, 리조트/호텔명, 항공사)는 무조건 최종 상품명에 노출시켜 네이밍을 완성하십시오.
 
 반드시 아래 [⚠️ 핵심 제약 가이드라인]을 단 한치도 어기지 말고 그대로 이행하십시오.
 
@@ -166,7 +173,7 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
             
             suggested_name = response.choices[0].message.content.strip()
             
-            # 🛑 [사후 가드] 혹시라도 GPT가 말 안 듣고 말머리나 라벨을 달고 나왔을 경우 완벽 도려내기
+            # 🛑 [사후 가드] 혹시라도 라벨이나 접두사를 붙여 나왔을 경우 완벽 도려내기
             suggested_name = re.sub(r'^(출력\s*결과|원복\s*핵심어|원본\s*핵심어|결과|refined_title)\s*:\s*', '', suggested_name, flags=re.IGNORECASE)
             suggested_name = suggested_name.replace('"', '').replace("'", "")
             
@@ -182,41 +189,40 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
             
             suggested_name = re.sub(r'\s+', ' ', suggested_name).strip()
             
-            # 💡 [최종 생존성 하드가드] 규격이 비정상적이거나 뇌절 라벨이 완벽히 안 지워졌으면 그냥 원본 보존 리턴
+            # 💡 [최종 생존성 하드가드] 조합 문맥이 꼬이거나 글자 수 탈락 조짐 시 원본명 그대로 리턴
             if len(suggested_name) < 25 or len(suggested_name) > 50 or "결과" in suggested_name:
                 return raw_original_name
                 
             return suggested_name
             
         except Exception:
-            # 에러 발생 시 원본 보호
+            # 에러 발생 시 완벽하게 안전한 원본 보호망 작동
             return raw_original_name
 
 # ==========================================
 # [메인 실행 엔진]
 # ==========================================
 async def main():
-    print(f"🛒 1. 상위 100개 행 타겟 고정식 무한 테스트 엔진 가동...")
-    sheet, current_products = load_google_sheet_data_fixed_100()
+    print(f"🛒 1. 전체 상품 리스트 자동 탐색 엔진 가동...")
+    sheet, current_products = load_google_sheet_all_data()
     
     if not current_products:
-        print("ℹ️ 처리할 상위 100개 상품 데이터가 시트에 존재하지 않습니다.")
+        print("ℹ️ 처리할 상품 데이터가 시트에 존재하지 않습니다.")
         return
 
     targets_to_process = current_products
     confirmed_pool = set()
     
-    print(f"📊 물리 테스트 타겟팅: 정확히 시트 상위 {len(targets_to_process)}개 행을 정밀 정제합니다.")
+    print(f"📊 총 {len(targets_to_process)}개의 상품 전체 행을 대상으로 대규모 병렬 정제를 시작합니다.")
 
-    print(f"🚀 차별화 자산 매핑 비동기 병렬 API 요청 중 (과금 잠금 제어)...")
+    print(f"🚀 LLM 비동기 병렬 대량 요청 개시...")
     tasks = [call_llm_with_retry(target, confirmed_pool) for target in targets_to_process]
     llm_results = await asyncio.gather(*tasks)
     
     id_update_mapping = {target["id"]: final_name for target, final_name in zip(targets_to_process, llm_results)}
     
-    print("💾 시트 G열 상위 100칸 영역 정밀 동기화 적재 중...")
+    print("💾 시트 G열 전체 영역 동기화 데이터 생성 중...")
     g_col_output = []
-    
     for target in current_products:
         p_id = target["id"]
         if p_id in id_update_mapping:
@@ -224,10 +230,22 @@ async def main():
         else:
             g_col_output.append([target["current_result"]])
             
-    range_string = f"G2:G{2 + len(g_col_output) - 1}"
-    sheet.update(range_string, g_col_output)
-    print(f"   └ [테스트 가드 적재 완수] 시트 {range_string} 영역 동기화 완료.")
-    print("✅ 프로세스 완수.")
+    # 💡 API 과부하 및 할당량 만료 방지를 위한 100개 단위 분할 분기 적재(Batch Update)
+    batch_size = 100
+    total_len = len(g_col_output)
+    print(f"📦 구글 API 안정성을 위해 {batch_size}개 단위로 나누어 순차 적재를 진행합니다.")
+    
+    for i in range(0, total_len, batch_size):
+        chunk = g_col_output[i:i + batch_size]
+        start_row = 2 + i
+        end_row = start_row + len(chunk) - 1
+        range_string = f"G{start_row}:G{end_row}"
+        
+        sheet.update(range_string, chunk)
+        print(f"   └ [적재 진행중] 시트 {range_string} 영역 동기화 완료 ({min(i + batch_size, total_len)}/{total_len})")
+        await asyncio.sleep(1) # 구글 시트 API 쓰기 제한 우회 페이싱
+        
+    print("✅ 모든 상품 리스트 정제 및 안정성 가드 적재가 최종 완수되었습니다.")
 
 if __name__ == "__main__":
     asyncio.run(main())
