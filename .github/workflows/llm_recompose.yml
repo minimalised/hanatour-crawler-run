@@ -2,7 +2,7 @@ name: "C-3. [LLM] 네이버 쇼핑 상품명 재구성"
 
 on:
   workflow_run:
-    workflows: ["Daily Hanatour Data Sync"]
+    workflows: ["C-2. [중복제거] 상품 정리"]
     types:
       - completed
 
