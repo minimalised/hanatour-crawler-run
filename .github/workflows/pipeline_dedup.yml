@@ -1,12 +1,21 @@
 name: "C-2. [중복제거] 상품 정리"
 
 on:
+  workflow_run:
+    # 💡 C-1 워크플로우의 'name'과 토씨 하나 틀리지 않게 똑같이 맞춰줍니다.
+    workflows: ["C-1. [동기화] 구글드라이브 파일 가져오기"]
+    types:
+      - completed
+
   repository_dispatch:
     types: [run_product_pipeline]
   workflow_dispatch: 
 
 jobs:
   build_and_run:
+    # 💡 C-1이 도중에 실패하지 않고 '성공(success)'으로 완료되었을 때만 작동하거나,
+    # 사용자가 수동(workflow_dispatch) 또는 외부 이벤트(repository_dispatch)로 켰을 때 실행되도록 조건을 걸어줍니다.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15 
 
