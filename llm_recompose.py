@@ -241,9 +241,9 @@ async def main():
         end_row = start_row + len(chunk) - 1
         range_string = f"G{start_row}:G{end_row}"
         
-        # 최신 gspread 스펙 가이드에 맞춰 명시적 키워드 인자 배정 및 덮어쓰기 안정성 확보
         sheet.update(range_name=range_string, values=chunk)
-        print(f"   └ [적재 진행중] 시트 {range_string} 영역 동기화 완료 ({min(i + batch_size, total_len)}/{total_len})")
+        # 🎯 변수명을 total_valid_len 으로 통일했습니다.
+        print(f"   └ [적재 진행중] 시트 {range_string} 영역 동기화 완료 ({min(i + batch_size, total_valid_len)}/{total_valid_len})")
         await asyncio.sleep(1) 
         
     print("✅ 모든 상품 리스트 정제 및 행 밀림 방지 가드 적재가 최종 완수되었습니다.")
