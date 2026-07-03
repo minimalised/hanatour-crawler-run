@@ -1,6 +1,5 @@
 import os
 import json
-import hashlib
 import asyncio
 import re
 from typing import List, Dict, Set
@@ -62,18 +61,19 @@ def extract_meta_and_clean(title: str):
 # [구글 캐시 시트 연동 로직]
 # ==========================================
 def load_cache_data(doc):
-    """'cache' 시트에서 기존에 정제했던 [원본명 : 결과명] 맵을 고속 로드합니다."""
+    """'cache' 시트에서 기존에 정제했던 [날것의 원본명 : 결과명] 맵을 고속 로드합니다."""
     try:
         cache_sheet = doc.worksheet("cache")
     except gspread.exceptions.WorksheetNotFound:
         cache_sheet = doc.add_worksheet(title="cache", rows="10000", cols="2")
-        cache_sheet.update(range_name="A1:B1", values=[["original_name", "refined_name"]])
+        cache_sheet.update(range_name="A1:B1", values=[["original_raw_name", "refined_name"]])
         return cache_sheet, {}
 
     all_values = cache_sheet.get_all_values()
     if len(all_values) <= 1:
         return cache_sheet, {}
 
+    # 🎯 변경: 띄어쓰기 오차를 완전히 방지하기 위해, 양끝 공백을 깎아낸(.strip()) 날것의 원본명을 Key로 빌드합니다.
     cache_dict = {row[0].strip(): row[1].strip() for row in all_values[1:] if len(row) >= 2 and row[0]}
     return cache_sheet, cache_dict
 
@@ -175,7 +175,6 @@ async def main():
     cache_sheet, cache_dict = load_cache_data(doc)
     
     current_products = []
-    # 🌟 안전장치 1: 실제 데이터가 존재하는 행만 엄격하게 필터링하여 수집 (유령 행 배제)
     for idx, row in enumerate(all_values[1:], start=2):
         if len(row) < 2:
             continue
@@ -183,7 +182,7 @@ async def main():
         p_name = str(row[1]).strip()
         current_result = str(row[6]).strip() if len(row) > 6 else ""
         
-        if p_id and p_name: # ID와 상품명이 모두 실재하는 완벽한 유효 데이터만 적재
+        if p_id and p_name: 
             current_products.append({
                 "row_num": idx,
                 "id": p_id,
@@ -193,14 +192,14 @@ async def main():
             
     print(f"📊 실재하는 유효 상품 {len(current_products)}개를 대상으로 처리를 시작합니다.")
 
-    # 🌟 안전장치 2: 캐시 필터링 적용 (처음 보는 상품명만 골라내기)
+    # 🌟 변경: raw 시트의 날것 그대로의 상품명(.strip())을 캐시 딕셔너리와 바로 동기화 대조합니다.
     targets_to_llm = []
     id_update_mapping = {}
     
     for prod in current_products:
-        origin_name = prod["name"]
-        if origin_name in cache_dict:
-            id_update_mapping[prod["id"]] = cache_dict[origin_name] # 캐시에서 바로 서빙 (비용 0원)
+        raw_name_key = prod["name"].strip()
+        if raw_name_key in cache_dict:
+            id_update_mapping[prod["id"]] = cache_dict[raw_name_key] # 완전 일치 캐시 적용
         else:
             targets_to_llm.append(prod)
 
@@ -216,14 +215,16 @@ async def main():
         new_cache_rows = []
         for target, final_name in zip(targets_to_llm, llm_results):
             id_update_mapping[target["id"]] = final_name
-            # 🎯 '결과'라는 뇌절 단어만 안 섞였다면, 실패작(원본명 그대로인 것)도 캐시에 등록해서 다음 재호출을 막습니다.
+            
+            # 🎯 뇌절 단어가 섞인 게 아니라면, 실패/성공 여부 상관없이 
+            # 날것의 '원본명'을 그대로 캐시에 태워 무적 잠금을 적용합니다.
             if "결과" not in final_name:
-                new_cache_rows.append([target["name"], final_name])
+                new_cache_rows.append([target["name"].strip(), final_name])
                 
         # 신규 데이터 캐시 업데이트
         append_to_cache(cache_sheet, new_cache_rows)
 
-    # 🌟 안전장치 3: 덮어쓰기 할 때 원본 배열 크기(G2 ~ G{유효데이터끝행})를 1대1로 고정하여 적재
+    # G열에 데이터 안전하게 적재
     print("💾 시트 G열 전체 영역 동기화 데이터 생성 중...")
     g_col_output = []
     for target in current_products:
@@ -231,7 +232,6 @@ async def main():
         final_title = id_update_mapping.get(p_id, target["current_result"])
         g_col_output.append([final_title])
             
-    # 유효 데이터의 마지막 행 번호 계산
     total_valid_len = len(g_col_output)
     batch_size = 100
     print(f"📦 구글 API 안정성을 위해 {batch_size}개 단위로 나누어 순차 적재를 진행합니다.")
@@ -243,7 +243,6 @@ async def main():
         range_string = f"G{start_row}:G{end_row}"
         
         sheet.update(range_name=range_string, values=chunk)
-        # 🎯 변수명을 total_valid_len 으로 통일했습니다.
         print(f"   └ [적재 진행중] 시트 {range_string} 영역 동기화 완료 ({min(i + batch_size, total_valid_len)}/{total_valid_len})")
         await asyncio.sleep(1) 
         
