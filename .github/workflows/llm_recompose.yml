@@ -9,12 +9,16 @@ on:
 
 jobs:
   run-llm-pipeline:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || github.event.workflow_run.conclusion == 'success' }}
+    # 💡 [수정] 객체 참조 에러가 나지 않도록 github.event.workflow_run의 존재 여부를 먼저 안전하게 검사합니다.
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') }}
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
+      with:
+        # 💡 [추가] C-2가 방금 push한 따끈따끈한 최신 캐시(product_cache.json)를 놓치지 않고 가져오도록 설정합니다.
+        fetch-depth: 0
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -37,11 +41,19 @@ jobs:
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action Bot"
-        git add product_cache.json
-        if ! git diff --quiet || ! git diff --staged --quiet; then
-          git commit -m "🤖 갱신: 상품 캐시 데이터 업데이트 (Incremental)"
-          git pull --rebase origin main
-          git push origin main
+        
+        # 원격 저장소의 최신 변경사항(C-2의 커밋 등)을 한 번 더 땡겨와서 충돌을 방지합니다.
+        git pull --rebase origin main
+        
+        if [ -f "product_cache.json" ]; then
+          git add product_cache.json
+          # 💡 [보완] 스테이징된 변경사항이 실제로 있을 때만 커밋을 수행합니다.
+          if ! git diff --cached --quiet; then
+            git commit -m "🤖 갱신: 상품 캐시 데이터 업데이트 (Incremental)"
+            git push origin main
+          else
+            echo "변경 사항이 없어 푸시를 건너뜁니다."
+          fi
         else
-          echo "변경 사항이 없어 푸시를 건너뜁니다."
+          echo "⚠️ 캐시 파일이 존재하지 않습니다."
         fi
