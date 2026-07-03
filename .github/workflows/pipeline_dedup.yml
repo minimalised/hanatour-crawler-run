@@ -1,8 +1,8 @@
-name: "C-2. [중복제거] 상품 정리"
+name: "C-2. 중복제거 상품 정리"
 
 on:
   workflow_run:
-    workflows: ["C-1. [동기화] 구글드라이브 파일 가져오기"]
+    workflows: ["C-1. 동기화 구글드라이브 파일 가져오기"]
     types:
       - completed
   repository_dispatch:
