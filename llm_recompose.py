@@ -216,7 +216,8 @@ async def main():
         new_cache_rows = []
         for target, final_name in zip(targets_to_llm, llm_results):
             id_update_mapping[target["id"]] = final_name
-            if final_name != target["name"] and "결과" not in final_name:
+            # 🎯 '결과'라는 뇌절 단어만 안 섞였다면, 실패작(원본명 그대로인 것)도 캐시에 등록해서 다음 재호출을 막습니다.
+            if "결과" not in final_name:
                 new_cache_rows.append([target["name"], final_name])
                 
         # 신규 데이터 캐시 업데이트
