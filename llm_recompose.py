@@ -15,44 +15,33 @@ from openai import AsyncOpenAI
 SPREADSHEET_KEY = os.environ.get("SOURCE_SPREADSHEET_ID") 
 SOURCE_SHEET_NAME = "raw"                        
 
-# 동시 처리 태스크 수 (Rate Limit 방어)
 MAX_CONCURRENT_TASKS = 10 
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
 aclient = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
 
 # ==========================================
-# [데이터 전처리 함수 - 골프 CC 보호 및 출발지 버그 차단]
+# [데이터 전처리 함수]
 # ==========================================
 def extract_meta_and_clean(title: str):
-    """
-    골프 자산(성문안CC 등)을 완벽하게 보호하고 출발 도시가 없는 경우 빈 값("")을 리턴합니다.
-    """
     if not title:
         return "", "", ""
         
-    # URL 및 링크 제거
     title_clean = re.sub(r'https?://\S+', ' ', title)
     
-    # 1. 출발공항 패턴을 '순수 원본 문자열(title)'에서 엄격하게 정량 추출
     airport_match = re.search(r'\[?(청주|대구|부산|인천|무안|양양|제주)\]?\s*출발', title)
     if airport_match:
         city = airport_match.group(1).strip()
         departure = f"[{city}출발]"
     else:
-        departure = "" # 없으면 철저히 공백 고정
+        departure = "" 
 
-    # 2. 일정(박/일) 추출
     duration_match = re.search(r'\d+박\s*\d+일|\d+일|\d+박\d+일|\d+~\d+일|\d+-\d+일', title_clean)
     duration = duration_match.group(0).strip() if duration_match else ""
     duration = duration.replace('~', '-') 
 
-    # 3. [골프 핵심 자산] 알파벳 대소문자 CC가 지워지지 않도록 선제적으로 대문자 치환 보호
     title_clean = re.sub(r'\bCC\b|\bcc\b|Cc|cC', 'CC', title_clean)
-    
-    # 4. 의미 없는 5자리 이상 숫자 코드 박멸
     title_clean = re.sub(r'\b\d{5,}\b', ' ', title_clean)
     
-    # 5. 블랙리스트 광고 단어 정밀 도려내기 (자산 가치를 훼손하는 수식어 전면 차단)
     kill_words = [
         "2색상품", "2색매력", "3색골프", "다색골프", "두도시한번에", "두도시", "한번에", "시티", 
         "골프장맵", "거리측정", "이용권", "추천", "명문골프장", "원주명문골프장", "명문", "지역", "쏙쏙", "핵심관광쏙쏙",
@@ -64,62 +53,40 @@ def extract_meta_and_clean(title: str):
     for kw in kill_words:
         title_clean = title_clean.replace(kw, " ")
 
-    # 6. 특수문자 청소 (한글, 숫자, 공백, 슬래시, 대시 및 보호된 골프장 영문 'CC'만 허용)
     title_clean = re.sub(r'[^가-힣0-9\s\-\/[A-Z]]', ' ', title_clean)
-    
-    # 7. CC를 제외한 나머지 낱개 영문 시스템 문자들만 청소
     title_clean = re.sub(r'\b(?![CC]\b)[A-Za-z]\b', ' ', title_clean)
-
     title_clean = re.sub(r'\s+', ' ', title_clean).strip()
     return departure, duration, title_clean
 
 # ==========================================
-# [구글 시트 연동 로직 - 가변형 전체 로드]
+# [구글 캐시 시트 연동 로직]
 # ==========================================
-def load_google_sheet_all_data():
-    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    google_json_raw = os.environ.get("GOOGLE_JSON_RAW")
-    if google_json_raw:
-        service_account_info = json.loads(google_json_raw)
-        creds = Credentials.from_service_account_info(service_account_info, scopes=scopes)
-    else:
-        creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
-        
-    client = gspread.authorize(creds)
-    doc = client.open_by_key(SPREADSHEET_KEY)
-    sheet = doc.worksheet(SOURCE_SHEET_NAME)
-    
-    # 데이터가 있는 전체 영역 로드
-    all_values = sheet.get_all_values()
+def load_cache_data(doc):
+    """'cache' 시트에서 기존에 정제했던 [원본명 : 결과명] 맵을 고속 로드합니다."""
+    try:
+        cache_sheet = doc.worksheet("cache")
+    except gspread.exceptions.WorksheetNotFound:
+        cache_sheet = doc.add_worksheet(title="cache", rows="10000", cols="2")
+        cache_sheet.update(range_name="A1:B1", values=[["original_name", "refined_name"]])
+        return cache_sheet, {}
+
+    all_values = cache_sheet.get_all_values()
     if len(all_values) <= 1:
-        return sheet, []
-        
-    header = all_values[0]
-    cell_range = all_values[1:] # 헤더 제외한 실제 데이터
-    
-    processed_rows = []
-    for idx, row in enumerate(cell_range, start=2): # 시트 행 번호는 2부터 시작
-        while len(row) < 7:
-            row.append("")
-        p_id = str(row[0]).strip()   
-        p_name = str(row[1]).strip() 
-        current_result = str(row[6]).strip() 
-        
-        if p_id and p_name: 
-            processed_rows.append({
-                "row_num": idx,
-                "id": p_id,
-                "name": p_name,
-                "current_result": current_result
-            })
-    return sheet, processed_rows
+        return cache_sheet, {}
+
+    cache_dict = {row[0].strip(): row[1].strip() for row in all_values[1:] if len(row) >= 2 and row[0]}
+    return cache_sheet, cache_dict
+
+def append_to_cache(cache_sheet, new_items: List[List[str]]):
+    if not new_items:
+        return
+    cache_sheet.append_rows(new_items)
 
 # ==========================================
-# 🛑 무한 과금 원천 차단형 비동기 LLM 엔지니어링 (1대1 단발 호출)
+# [비동기 LLM 엔지니어링 호출]
 # ==========================================
 async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
     async with semaphore:
-        # 💡 실패 대비 원본 상품명 하드 복사 백업
         raw_original_name = target["name"]
         departure, duration, cleaned_title = extract_meta_and_clean(raw_original_name)
         
@@ -129,7 +96,6 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
         if "NO옵션" in raw_original_name or "노옵션" in raw_original_name: options += "노옵션 "
         options = options.strip()
 
-        # 💡 라벨링 뇌절 전면 금지 지시 및 자산 보존 하드캐리 프롬프트
         prompt = f"""
 당신은 네이버 쇼핑 입점 및 검색 최적화(SEO) 지침을 완벽하게 숙지한 글로벌 커머스 상품명 정제 전문가입니다.
 원본 핵심어의 불필요한 미사여구를 제거하되, 해당 상품 고유의 가치 자산인 명사(골프장명, 리조트/호텔명, 항공사)는 무조건 최종 상품명에 노출시켜 네이밍을 완성하십시오.
@@ -160,43 +126,27 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
 원본: 강원 원주 골프 2일 36홀 원주 골프장 성문안CC
 결과: 강원 원주 골프 2일 36홀 성문안CC 라운딩 골프여행
 """
-
         try:
             response = await aclient.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
+                messages=[{"role": "user", "content": prompt}],
                 max_tokens=80,
                 temperature=0.2
             )
-            
             suggested_name = response.choices[0].message.content.strip()
-            
-            # 🛑 [사후 가드] 혹시라도 라벨이나 접두사를 붙여 나왔을 경우 완벽 도려내기
             suggested_name = re.sub(r'^(출력\s*결과|원복\s*핵심어|원본\s*핵심어|결과|refined_title)\s*:\s*', '', suggested_name, flags=re.IGNORECASE)
             suggested_name = suggested_name.replace('"', '').replace("'", "")
-            
-            # 특수문자 사후 공백 처리 안전장치
             suggested_name = re.sub(r'[\[\]_,\!#+/\(\)A-Za-z]', ' ', suggested_name)
             
-            # 출발지 결합 예외처리 보정
-            if departure:
-                if not suggested_name.startswith(departure):
-                    clean_opt = suggested_name.replace(departure.replace("[","").replace("]",""), "")
-                    clean_opt = re.sub(r'^[ \t\s\-]+', '', clean_opt).strip()
-                    suggested_name = f"{departure} {clean_opt}"
+            if departure and not suggested_name.startswith(departure):
+                clean_opt = suggested_name.replace(departure.replace("[","").replace("]",""), "").strip()
+                suggested_name = f"{departure} {clean_opt}"
             
             suggested_name = re.sub(r'\s+', ' ', suggested_name).strip()
-            
-            # 💡 [최종 생존성 하드가드] 조합 문맥이 꼬이거나 글자 수 탈락 조짐 시 원본명 그대로 리턴
             if len(suggested_name) < 25 or len(suggested_name) > 50 or "결과" in suggested_name:
                 return raw_original_name
-                
             return suggested_name
-            
         except Exception:
-            # 에러 발생 시 완벽하게 안전한 원본 보호망 작동
             return raw_original_name
 
 # ==========================================
@@ -204,48 +154,99 @@ async def call_llm_with_retry(target: Dict, confirmed_pool: Set[str]) -> str:
 # ==========================================
 async def main():
     print(f"🛒 1. 전체 상품 리스트 자동 탐색 엔진 가동...")
-    sheet, current_products = load_google_sheet_all_data()
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    google_json_raw = os.environ.get("GOOGLE_JSON_RAW")
+    if google_json_raw:
+        service_account_info = json.loads(google_json_raw)
+        creds = Credentials.from_service_account_info(service_account_info, scopes=scopes)
+    else:
+        creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
+        
+    client = gspread.authorize(creds)
+    doc = client.open_by_key(SPREADSHEET_KEY)
+    sheet = doc.worksheet(SOURCE_SHEET_NAME)
     
-    if not current_products:
-        print("ℹ️ 처리할 상품 데이터가 시트에 존재하지 않습니다.")
+    all_values = sheet.get_all_values()
+    if len(all_values) <= 1:
+        print("ℹ️ 처리할 데이터가 존재하지 않습니다.")
         return
+        
+    # 캐시 시트 로드
+    cache_sheet, cache_dict = load_cache_data(doc)
+    
+    current_products = []
+    # 🌟 안전장치 1: 실제 데이터가 존재하는 행만 엄격하게 필터링하여 수집 (유령 행 배제)
+    for idx, row in enumerate(all_values[1:], start=2):
+        if len(row) < 2:
+            continue
+        p_id = str(row[0]).strip()
+        p_name = str(row[1]).strip()
+        current_result = str(row[6]).strip() if len(row) > 6 else ""
+        
+        if p_id and p_name: # ID와 상품명이 모두 실재하는 완벽한 유효 데이터만 적재
+            current_products.append({
+                "row_num": idx,
+                "id": p_id,
+                "name": p_name,
+                "current_result": current_result
+            })
+            
+    print(f"📊 실재하는 유효 상품 {len(current_products)}개를 대상으로 처리를 시작합니다.")
 
-    targets_to_process = current_products
-    confirmed_pool = set()
+    # 🌟 안전장치 2: 캐시 필터링 적용 (처음 보는 상품명만 골라내기)
+    targets_to_llm = []
+    id_update_mapping = {}
     
-    print(f"📊 총 {len(targets_to_process)}개의 상품 전체 행을 대상으로 대규모 병렬 정제를 시작합니다.")
+    for prod in current_products:
+        origin_name = prod["name"]
+        if origin_name in cache_dict:
+            id_update_mapping[prod["id"]] = cache_dict[origin_name] # 캐시에서 바로 서빙 (비용 0원)
+        else:
+            targets_to_llm.append(prod)
 
-    print(f"🚀 LLM 비동기 병렬 대량 요청 개시...")
-    tasks = [call_llm_with_retry(target, confirmed_pool) for target in targets_to_process]
-    llm_results = await asyncio.gather(*tasks)
+    print(f"🎯 캐시 히트: {len(current_products) - len(targets_to_llm)}개 완료 (비용 0원)")
     
-    id_update_mapping = {target["id"]: final_name for target, final_name in zip(targets_to_process, llm_results)}
-    
+    # 신규 상품이 있을 때만 LLM 호출
+    if targets_to_llm:
+        print(f"🚀 신규 상품 {len(targets_to_llm)}개에 대해서만 LLM 비동기 대량 요청 개시...")
+        confirmed_pool = set()
+        tasks = [call_llm_with_retry(target, confirmed_pool) for target in targets_to_llm]
+        llm_results = await asyncio.gather(*tasks)
+        
+        new_cache_rows = []
+        for target, final_name in zip(targets_to_llm, llm_results):
+            id_update_mapping[target["id"]] = final_name
+            if final_name != target["name"] and "결과" not in final_name:
+                new_cache_rows.append([target["name"], final_name])
+                
+        # 신규 데이터 캐시 업데이트
+        append_to_cache(cache_sheet, new_cache_rows)
+
+    # 🌟 안전장치 3: 덮어쓰기 할 때 원본 배열 크기(G2 ~ G{유효데이터끝행})를 1대1로 고정하여 적재
     print("💾 시트 G열 전체 영역 동기화 데이터 생성 중...")
     g_col_output = []
     for target in current_products:
         p_id = target["id"]
-        if p_id in id_update_mapping:
-            g_col_output.append([id_update_mapping[p_id]])
-        else:
-            g_col_output.append([target["current_result"]])
+        final_title = id_update_mapping.get(p_id, target["current_result"])
+        g_col_output.append([final_title])
             
-    # 💡 API 과부하 및 할당량 만료 방지를 위한 100개 단위 분할 분기 적재(Batch Update)
+    # 유효 데이터의 마지막 행 번호 계산
+    total_valid_len = len(g_col_output)
     batch_size = 100
-    total_len = len(g_col_output)
     print(f"📦 구글 API 안정성을 위해 {batch_size}개 단위로 나누어 순차 적재를 진행합니다.")
     
-    for i in range(0, total_len, batch_size):
+    for i in range(0, total_valid_len, batch_size):
         chunk = g_col_output[i:i + batch_size]
         start_row = 2 + i
         end_row = start_row + len(chunk) - 1
         range_string = f"G{start_row}:G{end_row}"
         
-        sheet.update(range_string, chunk)
+        # 최신 gspread 스펙 가이드에 맞춰 명시적 키워드 인자 배정 및 덮어쓰기 안정성 확보
+        sheet.update(range_name=range_string, values=chunk)
         print(f"   └ [적재 진행중] 시트 {range_string} 영역 동기화 완료 ({min(i + batch_size, total_len)}/{total_len})")
-        await asyncio.sleep(1) # 구글 시트 API 쓰기 제한 우회 페이싱
+        await asyncio.sleep(1) 
         
-    print("✅ 모든 상품 리스트 정제 및 안정성 가드 적재가 최종 완수되었습니다.")
+    print("✅ 모든 상품 리스트 정제 및 행 밀림 방지 가드 적재가 최종 완수되었습니다.")
 
 if __name__ == "__main__":
     asyncio.run(main())
