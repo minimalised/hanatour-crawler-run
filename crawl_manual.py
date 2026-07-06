@@ -22,15 +22,14 @@ def parse_product_info(html_content, url):
         title_element = soup.select_one(".item_title")
         title = title_element.get_text(strip=True) if title_element else "N/A"
         
-        # [수정] 가격 추출 로직 고도화
+        # 가격 추출 로직 고도화
         price_elements = soup.select(".price")
         price = "N/A"
         for elem in price_elements:
             txt = elem.get_text(strip=True)
-            # 숫자와 쉼표, 원 등이 섞여 있는 문자열에서 숫자만 추출
             digits = re.sub(r'[^0-9]', '', txt)
-            if digits:  # 숫자가 존재한다면
-                price = int(digits)  # 파이썬 int(정수) 타입으로 변환!
+            if digits:  
+                price = int(digits)  
                 break
                 
         # bg_alpha만 아니면 예외 없이 무조건 첫 배너 이미지 추출
@@ -54,8 +53,11 @@ async def main():
     source_sheet = spreadsheet.worksheet("수동상품리스트")
     target_sheet = spreadsheet.worksheet("수동raw")
     
-    urls_to_crawl = source_sheet.col_values(1)[1:]
-    print(f"[*] 총 {len(urls_to_crawl)}개의 URL 탐색 (종합 무결점 모드)")
+    # [수정] A열(URL)과 B열(수동 상품명) 데이터를 한 번에 가져옵니다.
+    # get_all_values()를 써서 행별로 접근하는 것이 데이터 정렬을 유지하기에 안전합니다.
+    all_rows = source_sheet.get_all_values()[1:]  # 헤더 제외
+    
+    print(f"[*] 총 {len(all_rows)}개의 데이터 행 탐색 (종합 무결점 모드)")
     
     update_payload = []
     
@@ -70,12 +72,17 @@ async def main():
         )
         page = await context.new_page()
         
-        # [참고] CSS 차단 때문에 가격 태그 구조가 뒤틀린다면 아래 라인에서 "stylesheet"를 제거해야 할 수 있습니다.
         await page.route("**/*", lambda route: route.abort() if route.request.resource_type in ["image", "stylesheet", "font", "media"] or "analytics" in route.request.url else route.continue_())
         
-        for idx, url in enumerate(urls_to_crawl, start=2):
+        for idx, row in enumerate(all_rows, start=2):
+            # [추가] 행 데이터에서 URL(A열)과 수동지정 상품명(B열)을 분리합니다.
+            url = row[0].strip() if len(row) > 0 else ""
+            custom_title = row[1].strip() if len(row) > 1 else ""
+            
             if not url or not url.startswith("http"):
-                update_payload.append(["N/A", "N/A", "N/A", url if url else "", "N/A"])
+                # URL이 없더라도 B열에 수동 상품명이 적혀있을 수 있으므로 반영해 줍니다.
+                final_title = custom_title if custom_title else "N/A"
+                update_payload.append(["N/A", final_title, "N/A", url if url else "", "N/A"])
                 continue
                 
             print(f"[*] [{idx}행] 상품 데이터 추출 중: {url}")
@@ -89,13 +96,19 @@ async def main():
                 
                 html_content = await page.content()
                 product_data = parse_product_info(html_content, url)
-                update_payload.append(product_data)
                 
+                # [추가] 만약 B열(custom_title)에 값이 있다면 크롤링한 상품명 대신 대체합니다.
+                if custom_title:
+                    product_data[1] = custom_title  # 리스트의 2번째 요소(title) 변경
+                
+                update_payload.append(product_data)
                 await asyncio.sleep(0.5)
                 
             except Exception as e:
                 print(f"[-] {idx}행 실패 패스: {e}")
-                update_payload.append(["Fail", "Fail", "Fail", url, "Fail"])
+                # 실패했을 때도 B열에 지정한 이름이 있다면 최소한 이름은 살려둡니다.
+                fail_title = custom_title if custom_title else "Fail"
+                update_payload.append(["Fail", fail_title, "Fail", url, "Fail"])
         
         await browser.close()
         
@@ -104,7 +117,6 @@ async def main():
         end_row = 1 + len(update_payload)
         target_range = f"G2:K{end_row}"
         
-        # [수정] value_input_option="USER_ENTERED" 추가 (시트가 숫자로 인식하도록 유도)
         target_sheet.update(
             range_name=target_range, 
             values=update_payload, 
