@@ -73,7 +73,6 @@ def load_cache_data(doc):
     if len(all_values) <= 1:
         return cache_sheet, {}
 
-    # 🎯 변경: 띄어쓰기 오차를 완전히 방지하기 위해, 양끝 공백을 깎아낸(.strip()) 날것의 원본명을 Key로 빌드합니다.
     cache_dict = {row[0].strip(): row[1].strip() for row in all_values[1:] if len(row) >= 2 and row[0]}
     return cache_sheet, cache_dict
 
@@ -180,7 +179,9 @@ async def main():
             continue
         p_id = str(row[0]).strip()
         p_name = str(row[1]).strip()
-        current_result = str(row[6]).strip() if len(row) > 6 else ""
+        
+        # 🎯 변경: 기존 G열(index 6)에서 두 칸 밀려난 I열(index 8) 데이터를 current_result로 연동합니다.
+        current_result = str(row[8]).strip() if len(row) > 8 else ""
         
         if p_id and p_name: 
             current_products.append({
@@ -192,20 +193,18 @@ async def main():
             
     print(f"📊 실재하는 유효 상품 {len(current_products)}개를 대상으로 처리를 시작합니다.")
 
-    # 🌟 변경: raw 시트의 날것 그대로의 상품명(.strip())을 캐시 딕셔너리와 바로 동기화 대조합니다.
     targets_to_llm = []
     id_update_mapping = {}
     
     for prod in current_products:
         raw_name_key = prod["name"].strip()
         if raw_name_key in cache_dict:
-            id_update_mapping[prod["id"]] = cache_dict[raw_name_key] # 완전 일치 캐시 적용
+            id_update_mapping[prod["id"]] = cache_dict[raw_name_key]
         else:
             targets_to_llm.append(prod)
 
     print(f"🎯 캐시 히트: {len(current_products) - len(targets_to_llm)}개 완료 (비용 0원)")
     
-    # 신규 상품이 있을 때만 LLM 호출
     if targets_to_llm:
         print(f"🚀 신규 상품 {len(targets_to_llm)}개에 대해서만 LLM 비동기 대량 요청 개시...")
         confirmed_pool = set()
@@ -215,32 +214,30 @@ async def main():
         new_cache_rows = []
         for target, final_name in zip(targets_to_llm, llm_results):
             id_update_mapping[target["id"]] = final_name
-            
-            # 🎯 뇌절 단어가 섞인 게 아니라면, 실패/성공 여부 상관없이 
-            # 날것의 '원본명'을 그대로 캐시에 태워 무적 잠금을 적용합니다.
             if "결과" not in final_name:
                 new_cache_rows.append([target["name"].strip(), final_name])
                 
-        # 신규 데이터 캐시 업데이트
         append_to_cache(cache_sheet, new_cache_rows)
 
-    # G열에 데이터 안전하게 적재
-    print("💾 시트 G열 전체 영역 동기화 데이터 생성 중...")
-    g_col_output = []
+    # 🎯 변경: 시트 G/H열 세팅 프로세스 준비 완료 후, I열에 결과 적재 예정
+    print("💾 시트 I열 전체 영역 동기화 데이터 생성 중...")
+    i_col_output = []
     for target in current_products:
         p_id = target["id"]
         final_title = id_update_mapping.get(p_id, target["current_result"])
-        g_col_output.append([final_title])
+        i_col_output.append([final_title])
             
-    total_valid_len = len(g_col_output)
+    total_valid_len = len(i_col_output)
     batch_size = 100
     print(f"📦 구글 API 안정성을 위해 {batch_size}개 단위로 나누어 순차 적재를 진행합니다.")
     
     for i in range(0, total_valid_len, batch_size):
-        chunk = g_col_output[i:i + batch_size]
+        chunk = i_col_output[i:i + batch_size]
         start_row = 2 + i
         end_row = start_row + len(chunk) - 1
-        range_string = f"G{start_row}:G{end_row}"
+        
+        # 🎯 변경: 적재 영역을 G에서 I로 완전히 교체합니다.
+        range_string = f"I{start_row}:I{end_row}"
         
         sheet.update(range_name=range_string, values=chunk)
         print(f"   └ [적재 진행중] 시트 {range_string} 영역 동기화 완료 ({min(i + batch_size, total_valid_len)}/{total_valid_len})")
