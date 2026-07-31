@@ -31,9 +31,9 @@ jobs:
 
     - name: Run Landing Check Script
       env:
-        # 등록하신 Secrets 명칭 그대로 매핑
-        NAVER_API_KEY: ${{ secrets.NAVER_API_LICENSE_KEY }}
-        NAVER_SECRET_KEY: ${{ secrets.NAVER_API_SECRET_KEY }}
+        # Secrets 이름과 동일하게 환경변수명 전달
+        NAVER_API_LICENSE_KEY: ${{ secrets.NAVER_API_LICENSE_KEY }}
+        NAVER_API_SECRET_KEY: ${{ secrets.NAVER_API_SECRET_KEY }}
         NAVER_CUSTOMER_ID: ${{ secrets.NAVER_CUSTOMER_ID }}
         TARGET_SPREADSHEET_ID: ${{ secrets.TARGET_SPREADSHEET_ID }}
       run: |
