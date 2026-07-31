@@ -35,7 +35,7 @@ jobs:
         NAVER_API_KEY: ${{ secrets.NAVER_API_LICENSE_KEY }}
         NAVER_SECRET_KEY: ${{ secrets.NAVER_API_SECRET_KEY }}
         NAVER_CUSTOMER_ID: ${{ secrets.NAVER_CUSTOMER_ID }}
-        SPREADSHEET_ID: ${{ secrets.TARGET_SPREADSHEET_ID }}
+        TARGET_SPREADSHEET_ID: ${{ secrets.TARGET_SPREADSHEET_ID }}
       run: |
         python check_ads.py
 
