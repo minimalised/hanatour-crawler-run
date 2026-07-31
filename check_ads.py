@@ -1,22 +1,22 @@
 import os
 import time
+import json
 import base64
 import hashlib
 import hmac
 import requests
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 
 # ----------------------------------------------------
 # 1. GitHub Secrets에서 전달된 환경변수 로드
-# (GitHub Secrets 변수명과 100% 동일하게 일치)
 # ----------------------------------------------------
-NAVER_API_LICENSE_KEY = os.environ.get("NAVER_API_LICENSE_KEY")
-NAVER_API_SECRET_KEY = os.environ.get("NAVER_API_SECRET_KEY")
-NAVER_CUSTOMER_ID = os.environ.get("NAVER_CUSTOMER_ID")
+NAVER_API_LICENSE_KEY = (os.environ.get("NAVER_API_LICENSE_KEY") or "").strip()
+NAVER_API_SECRET_KEY = (os.environ.get("NAVER_API_SECRET_KEY") or "").strip()
+NAVER_CUSTOMER_ID = (os.environ.get("NAVER_CUSTOMER_ID") or "").strip()
 
-TARGET_SPREADSHEET_ID = os.environ.get("TARGET_SPREADSHEET_ID")
-GCP_SA_KEY_PATH = "gcp_key.json"  # GOOGLE_JSON_RAW로 생성될 파일
+TARGET_SPREADSHEET_ID = (os.environ.get("TARGET_SPREADSHEET_ID") or "").strip()
+GOOGLE_JSON_RAW = os.environ.get("GOOGLE_JSON_RAW")
 
 # 기획전 종료 판단 키워드 (HTML 본문에 포함 시 '종료' 처리)
 EXPIRED_KEYWORDS = [
@@ -169,12 +169,14 @@ def main():
             print(f"진행 상황: {idx}/{len(ads)} 소재 검사 완료")
 
     print(">>> 3. 구글 스프레드시트 기록 중...")
-    scope = [
+    
+    # GOOGLE_JSON_RAW 환경변수를 직접 JSON으로 파싱하여 인증
+    scopes = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive"
     ]
-    
-    creds = ServiceAccountCredentials.from_json_keyfile_name(GCP_SA_KEY_PATH, scope)
+    service_account_info = json.loads(GOOGLE_JSON_RAW)
+    creds = Credentials.from_service_account_info(service_account_info, scopes=scopes)
     client = gspread.authorize(creds)
 
     # 1) 스프레드시트 열기
