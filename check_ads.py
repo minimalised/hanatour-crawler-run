@@ -9,9 +9,10 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 # ----------------------------------------------------
 # 1. GitHub Secrets에서 전달된 환경변수 로드
+# (GitHub Secrets 변수명과 100% 동일하게 일치)
 # ----------------------------------------------------
-NAVER_API_KEY = os.environ.get("NAVER_API_LICENSE_KEY")
-NAVER_SECRET_KEY = os.environ.get("NAVER_API_SECRET_KEY")
+NAVER_API_LICENSE_KEY = os.environ.get("NAVER_API_LICENSE_KEY")
+NAVER_API_SECRET_KEY = os.environ.get("NAVER_API_SECRET_KEY")
 NAVER_CUSTOMER_ID = os.environ.get("NAVER_CUSTOMER_ID")
 
 TARGET_SPREADSHEET_ID = os.environ.get("TARGET_SPREADSHEET_ID")
@@ -31,17 +32,19 @@ EXPIRED_KEYWORDS = [
 # 2. 네이버 검색광고 API HMAC 서명 생성
 # ----------------------------------------------------
 def generate_signature(timestamp, method, uri, secret_key):
+    if not secret_key:
+        raise ValueError("NAVER_API_SECRET_KEY 환경변수가 설정되지 않았습니다.")
     message = f"{timestamp}.{method}.{uri}"
     hash_obj = hmac.new(secret_key.encode('utf-8'), message.encode('utf-8'), hashlib.sha256).digest()
     return base64.b64encode(hash_obj).decode('utf-8')
 
 def get_naver_headers(method, uri):
     timestamp = str(int(time.time() * 1000))
-    signature = generate_signature(timestamp, method, uri, NAVER_SECRET_KEY)
+    signature = generate_signature(timestamp, method, uri, NAVER_API_SECRET_KEY)
     return {
         "Content-Type": "application/json; charset=UTF-8",
         "X-Timestamp": timestamp,
-        "X-API-KEY": NAVER_API_KEY,
+        "X-API-KEY": NAVER_API_LICENSE_KEY,
         "X-Customer": str(NAVER_CUSTOMER_ID),
         "X-Signature": signature
     }
