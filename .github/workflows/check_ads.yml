@@ -1,0 +1,45 @@
+name: Naver Ad Landing Page Monitor
+
+on:
+  schedule:
+    # UTC 기준 매일 23:00 (한국시간 오전 08:00)
+    - cron: '0 23 * * *'
+  workflow_dispatch:
+
+jobs:
+  check-landing-urls:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    # GOOGLE_JSON_RAW 비밀변수를 임시 json 파일로 생성
+    - name: Create GCP SA Key File
+      run: |
+        echo "${{ secrets.GOOGLE_JSON_RAW }}" > gcp_key.json
+
+    - name: Run Landing Check Script
+      env:
+        # 등록하신 Secrets 명칭 그대로 매핑
+        NAVER_API_KEY: ${{ secrets.NAVER_API_LICENSE_KEY }}
+        NAVER_SECRET_KEY: ${{ secrets.NAVER_API_SECRET_KEY }}
+        NAVER_CUSTOMER_ID: ${{ secrets.NAVER_CUSTOMER_ID }}
+        SPREADSHEET_ID: ${{ secrets.TARGET_SPREADSHEET_ID }}
+      run: |
+        python check_ads.py
+
+    - name: Clean up Credentials
+      if: always()
+      run: |
+        rm -f gcp_key.json
