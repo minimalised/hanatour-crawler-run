@@ -24,22 +24,12 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    # GOOGLE_JSON_RAW 비밀변수를 임시 json 파일로 생성
-    - name: Create GCP SA Key File
-      run: |
-        echo "${{ secrets.GOOGLE_JSON_RAW }}" > gcp_key.json
-
     - name: Run Landing Check Script
       env:
-        # Secrets 이름과 동일하게 환경변수명 전달
+        GOOGLE_JSON_RAW: ${{ secrets.GOOGLE_JSON_RAW }}
         NAVER_API_LICENSE_KEY: ${{ secrets.NAVER_API_LICENSE_KEY }}
         NAVER_API_SECRET_KEY: ${{ secrets.NAVER_API_SECRET_KEY }}
         NAVER_CUSTOMER_ID: ${{ secrets.NAVER_CUSTOMER_ID }}
         TARGET_SPREADSHEET_ID: ${{ secrets.TARGET_SPREADSHEET_ID }}
       run: |
         python check_ads.py
-
-    - name: Clean up Credentials
-      if: always()
-      run: |
-        rm -f gcp_key.json
