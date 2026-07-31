@@ -174,11 +174,22 @@ def main():
     creds = ServiceAccountCredentials.from_json_keyfile_name(GCP_SA_KEY_PATH, scope)
     client = gspread.authorize(creds)
 
-    sheet = client.open_by_key(TARGET_SPREADSHEET_ID).sheet1
+    # 1) 스프레드시트 열기
+    doc = client.open_by_key(TARGET_SPREADSHEET_ID)
+
+    # 2) '기획전URL' 시트 선택 (없으면 자동 생성)
+    TARGET_SHEET_NAME = "기획전URL"
+    try:
+        sheet = doc.worksheet(TARGET_SHEET_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        print(f"'{TARGET_SHEET_NAME}' 시트가 존재하지 않아 새 시트를 생성합니다.")
+        sheet = doc.add_worksheet(title=TARGET_SHEET_NAME, rows="1000", cols="10")
+
+    # 3) 기존 내용 초기화 후 데이터 업데이트
     sheet.clear()
     sheet.update('A1', rows)
 
-    print(">>> 업데이트 완료! 구글 스프레드시트를 확인해 보세요.")
+    print(f">>> '{TARGET_SHEET_NAME}' 시트에 업데이트가 완료되었습니다!")
 
 if __name__ == "__main__":
     main()
