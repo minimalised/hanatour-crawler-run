@@ -106,8 +106,8 @@ def sync_sheets():
 
     # 5. 타겟 스프레드시트에 쓰기
     target_id = os.environ["TARGET_SPREADSHEET_ID"]
-    print("[4/4] Writing data to target Google Sheet ('판매상품리스트')...")
-    target_sheet = gspread_client.open_by_key(target_id).worksheet("판매상품리스트")
+    print("[4/4] Writing data to target Google Sheet ('대표상품리스트')...")
+    target_sheet = gspread_client.open_by_key(target_id).worksheet("대표상품리스트")
     
     target_sheet.clear()
     target_sheet.update("A1", data)
