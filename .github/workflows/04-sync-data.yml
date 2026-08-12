@@ -29,4 +29,4 @@ jobs:
           SOURCE_SPREADSHEET_ID: ${{ secrets.SOURCE_SPREADSHEET_ID }}
           TARGET_SPREADSHEET_ID: ${{ secrets.TARGET_SPREADSHEET_ID }}
         run: |
-          python src/sync_products.py
+          python sync_products.py
