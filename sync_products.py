@@ -8,7 +8,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
 def sync_sheets():
-    # 1. 인증 정보 구성 (Drive 및 Sheets 읽기/쓰기 권한)
+    # 1. 인증 정보 구성
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive.readonly"
@@ -19,10 +19,10 @@ def sync_sheets():
     drive_service = build('drive', 'v3', credentials=creds)
     gspread_client = gspread.authorize(creds)
 
-    print("[1/4] Searching for shared .xlsx files...")
+    print("[1/4] Searching for '대표상품' .xlsx files...")
     
-    # 2. 공유 문서함을 포함하여 전체 드라이브에서 가장 최근 수정된 .xlsx 파일 조회
-    query = "name contains '.xlsx' and trashed = false"
+    # 2. 파일명에 '대표상품'이 들어간 최신 .xlsx 파일 필터링
+    query = "name contains '대표상품' and name contains '.xlsx' and trashed = false"
     
     results = drive_service.files().list(
         q=query,
@@ -37,13 +37,13 @@ def sync_sheets():
     files = results.get('files', [])
 
     if not files:
-        raise FileNotFoundError("구글 드라이브 권한 또는 .xlsx 파일 탐색에 실패했습니다.")
+        raise FileNotFoundError("구글 드라이브에서 '대표상품' 키워드가 포함된 .xlsx 파일을 찾을 수 없습니다.")
 
-    # 가장 최근에 수정된 엑셀 파일 선택
+    # 가장 최근 수정된 원본 엑셀 파일 선택
     latest_file = files[0]
-    print(f"[2/4] Latest File Detected: '{latest_file['name']}' (ID: {latest_file['id']}, Modified: {latest_file['modifiedTime']})")
+    print(f"[2/4] Target File Selected: '{latest_file['name']}' (ID: {latest_file['id']})")
 
-    # 3. 파일 메모리 다운로드
+    # 3. 파일 다운로드
     request = drive_service.files().get_media(fileId=latest_file['id'])
     file_stream = io.BytesIO()
     downloader = MediaIoBaseDownload(file_stream, request)
@@ -53,12 +53,12 @@ def sync_sheets():
     
     file_stream.seek(0)
 
-    # 4. openpyxl로 '대표상품리스트' 시트 데이터 읽기
+    # 4. openpyxl로 '대표상품리스트' 시트 추출
     workbook = openpyxl.load_workbook(file_stream, data_only=True)
     sheet_name = "대표상품리스트"
     
     if sheet_name not in workbook.sheetnames:
-        raise ValueError(f"엑셀 파일 내 '{sheet_name}' 시트가 존재하지 않습니다. (존재하는 시트: {workbook.sheetnames})")
+        raise ValueError(f"엑셀 파일 내 '{sheet_name}' 시트가 존재하지 않습니다. (존재 시트: {workbook.sheetnames})")
     
     excel_sheet = workbook[sheet_name]
     data = []
@@ -66,7 +66,7 @@ def sync_sheets():
         if any(cell is not None for cell in row):
             data.append([str(cell) if cell is not None else "" for cell in row])
 
-    print(f"[3/4] Successfully extracted {len(data)} rows.")
+    print(f"[3/4] Extracted {len(data)} rows from '{latest_file['name']}'.")
 
     # 5. 타겟 스프레드시트에 쓰기
     target_id = os.environ["TARGET_SPREADSHEET_ID"]
