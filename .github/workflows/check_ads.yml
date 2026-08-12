@@ -1,4 +1,4 @@
-name: Naver Ad Landing Page Monitor
+name: 기획전 랜딩페이지 확인
 
 on:
   schedule:
