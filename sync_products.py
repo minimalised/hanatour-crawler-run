@@ -110,7 +110,7 @@ def sync_sheets():
     target_sheet = gspread_client.open_by_key(target_id).worksheet("대표상품리스트")
     
     target_sheet.clear()
-    target_sheet.update("A1", data)
+    target_sheet.update(range_name="A1", values=data)
     print("Done! Sync completed successfully.")
 
 if __name__ == "__main__":
