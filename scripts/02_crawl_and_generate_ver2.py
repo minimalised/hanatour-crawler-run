@@ -217,7 +217,7 @@ async def run_crawler():
     
     try:
         source_doc = gc.open_by_key(source_spreadsheet_id)
-        source_sheet = source_doc.worksheet("상품리스트2")
+        source_sheet = source_doc.worksheet("상품리스트")
     except Exception as e:
         print(f"❌ 소스 스프레드시트 로드 실패: {e}"); return
 
