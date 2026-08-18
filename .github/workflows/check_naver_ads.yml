@@ -1,4 +1,4 @@
-name: 기획전 랜딩페이지 확인
+name: "[점검] 기획전 랜딩페이지 상태 확인"
 
 on:
   schedule:
@@ -12,10 +12,10 @@ jobs:
 
     steps:
     - name: Check out repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
@@ -32,4 +32,4 @@ jobs:
         NAVER_CUSTOMER_ID: ${{ secrets.NAVER_CUSTOMER_ID }}
         TARGET_SPREADSHEET_ID: ${{ secrets.TARGET_SPREADSHEET_ID }}
       run: |
-        python check_ads.py
+        python scripts/check_naver_ads.py
