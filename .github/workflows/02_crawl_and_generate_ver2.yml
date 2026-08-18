@@ -1,4 +1,4 @@
-name: Daily Hanatour Crawling (Batch v2)
+name: "[02] 퀵서치 상품 수집 및 AI 상품명 생성 ver2"
 
 on:
   schedule:
@@ -39,4 +39,4 @@ jobs:
           SOURCE_SPREADSHEET_ID: ${{ secrets.SOURCE_SPREADSHEET_ID }}
           TARGET_SPREADSHEET_ID: ${{ secrets.TARGET_SPREADSHEET_ID }}
         run: |
-          python -u crawling2.py
+          python -u 02_crawl_and_generate_ver2.py
