@@ -27,4 +27,4 @@ jobs:
           GOOGLE_JSON_RAW: ${{ secrets.GOOGLE_JSON_RAW }}
           TARGET_SPREADSHEET_ID: ${{ secrets.TARGET_SPREADSHEET_ID }}
         run: |
-          python crawl_products.py
+          python -u scripts/crawl_products.py
