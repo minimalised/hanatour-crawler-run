@@ -39,4 +39,4 @@ jobs:
           SOURCE_SPREADSHEET_ID: ${{ secrets.SOURCE_SPREADSHEET_ID }}
           TARGET_SPREADSHEET_ID: ${{ secrets.TARGET_SPREADSHEET_ID }}
         run: |
-          python -u 02_crawl_and_generate_ver2.py
+          python -u scripts/02_crawl_and_generate_ver2.py
