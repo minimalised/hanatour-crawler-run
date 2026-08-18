@@ -1,7 +1,7 @@
-name: "A-1. [크롤링] 퀵서치 상품 리스트"
+name: "[01] 퀵서치 상품 수집 및 AI 상품명 생성"
 
 on:
-  workflow_dispatch:      
+  workflow_dispatch:
 
 jobs:
   build:
@@ -24,11 +24,11 @@ jobs:
           python -m pip install pandas gspread google-auth playwright playwright-stealth openai
           python -m playwright install chromium
 
-      - name: Run Hanatour New Crawler
+      - name: Run Crawler & AI Pipeline
         env:
           GOOGLE_JSON_RAW: ${{ secrets.GOOGLE_JSON_RAW }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           SOURCE_SPREADSHEET_ID: ${{ secrets.SOURCE_SPREADSHEET_ID }}
           TARGET_SPREADSHEET_ID: ${{ secrets.TARGET_SPREADSHEET_ID }}
         run: |
-          python -u crawl_daily.py
+          python -u scripts/01_crawl_and_generate.py
