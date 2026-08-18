@@ -1,0 +1,42 @@
+name: Daily Hanatour Crawling (Batch v2)
+
+on:
+  schedule:
+    - cron: '0 21 * * *'  # 매일 한국 시간 오전 6시 자동 실행
+  workflow_dispatch:      # 수동 실행 버튼 활성화
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      # 💡 Playwright 1.62.0 대응을 위해 도커 이미지 버전을 v1.62.0-noble로 변경
+      image: mcr.microsoft.com/playwright:v1.62.0-noble
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 1. 최신 asyncio 문법 지원을 위해 3.11 버전으로 지정
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # 2. 의존성 설치 및 컨테이너 내 내장 브라우저 호환성 설정
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pandas gspread google-auth playwright playwright-stealth openai
+          
+          # 컨테이너 환경에 이미 설치된 브라우저 바이너리를 파이썬과 링크해줍니다.
+          python -m playwright install-deps
+
+      # 3. 새 버전(crawling2.py) 실행
+      - name: Run Hanatour New Crawler v2
+        env:
+          GOOGLE_JSON_RAW: ${{ secrets.GOOGLE_JSON_RAW }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SOURCE_SPREADSHEET_ID: ${{ secrets.SOURCE_SPREADSHEET_ID }}
+          TARGET_SPREADSHEET_ID: ${{ secrets.TARGET_SPREADSHEET_ID }}
+        run: |
+          python -u crawling2.py
