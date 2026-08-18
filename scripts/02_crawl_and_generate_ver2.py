@@ -238,16 +238,18 @@ async def run_crawler():
     print(f"✅ 총 {len(target_tasks)}개의 유효 타겟 상품 라인을 확보했습니다.")
 
     existing_titles_dict = {}
+    target_spreadsheet_id = os.environ.get("TARGET_SPREADSHEET_ID", source_spreadsheet_id)
     try:
-        github_sheet = source_doc.worksheet("github2")
+        target_doc = gc.open_by_key(target_spreadsheet_id)
+        github_sheet = target_doc.worksheet("github2")
         for r in github_sheet.get_all_records():
             pid = str(r.get("ID", "")).strip()
             if pid:
                 t_opts = [str(r.get(f"네이버_상품명_{i}", "")).strip() for i in range(1, 6)]
-                # 기존 캐시 중 미달마크가 있거나, AI 버그(대구 [출발] 등)가 포함된 행은 스킵하고 전량 재생성 대상으로 분류합니다.
-                if not any(t_opts) or any("[⚠️가이드미달]" in opt or " [출발]" in opt for opt in t_opts): continue
+                if not any(t_opts) or any("[⚠️가이드미달]" in opt or " [출발]" in opt for opt in t_opts): 
+                    continue
                 existing_titles_dict[pid] = t_opts
-        print(f"✅ 정상 수집된 기존 상품 {len(existing_titles_dict)}개를 캐싱했습니다. (미달 본 및 포맷 오류 본 자동 리셋)")
+        print(f"✅ 정상 수집된 기존 상품 {len(existing_titles_dict)}개를 캐싱했습니다.")
     except Exception:
         print("⚠️ 기존 github2 캐시가 없거나 비어있습니다. 전수 조사로 진행합니다.")
 
