@@ -107,7 +107,6 @@ async def main():
         await browser.close()
         
     if update_payload:
-        # [수정] G열~K열 대신 H열~L열로 변경
         target_sheet.batch_clear(["H2:L1000"])
         end_row = 1 + len(update_payload)
         target_range = f"H2:L{end_row}"
